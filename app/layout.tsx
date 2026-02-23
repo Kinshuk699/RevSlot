@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
 import { Geist, Geist_Mono } from "next/font/google";
+import { Toaster } from "sonner";
 import { syncUserProfile } from "@/app/actions/sync-user";
 import { AuthNav } from "@/components/AuthNav";
 import "./globals.css";
@@ -48,11 +49,13 @@ export default async function RootLayout({
           >
             <AuthNav />
             {children}
+            <Toaster theme="dark" richColors closeButton />
           </ClerkProvider>
         ) : (
           <>
             <AuthNav />
             {children}
+            <Toaster theme="dark" richColors closeButton />
           </>
         )}
       </body>

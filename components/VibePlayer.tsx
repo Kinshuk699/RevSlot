@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ShoppableBubble } from "@/components/ShoppableBubble";
 
-type AdSlot = {
+export type AdSlot = {
   timestamp: number;
   productName: string;
   productImageUrl: string;
