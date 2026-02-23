@@ -140,6 +140,7 @@ function generateMaskDataUrl(
 export function VideoWorkflowPanel() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [step, setStep] = useState("");
+  const [progress, setProgress] = useState(0);
   const [input, setInput] = useState<WorkflowInput>(defaultInput);
   const [result, setResult] = useState<ProcessVideoResult | null>(null);
 
@@ -251,9 +252,11 @@ export function VideoWorkflowPanel() {
 
     setIsProcessing(true);
     setResult(null);
+    setProgress(0);
 
     try {
       setStep(`① Extracting frame at ${adTimestamp.toFixed(1)}s …`);
+      setProgress(5);
       let frameDataUrl: string | undefined;
       let maskDataUrl: string | undefined;
 
@@ -261,7 +264,8 @@ export function VideoWorkflowPanel() {
         const frame = await extractFrame(input.sourceVideoUrl, adTimestamp);
         frameDataUrl = frame.dataUrl;
         maskDataUrl = generateMaskDataUrl(frame.width, frame.height, maskRegion);
-        setStep("② Frame + mask captured! Analysing scene …");
+        setStep("② Frame + mask captured!");
+        setProgress(10);
       } catch (err) {
         console.warn("Frame extraction failed:", err);
         setStep("⚠ Frame extraction failed (CORS). Falling back …");
@@ -272,9 +276,34 @@ export function VideoWorkflowPanel() {
 
       setStep(
         frameDataUrl
-          ? "③ AI is analysing scene & painting your product … (~15s)"
+          ? "③ Analysing scene & preparing product image …"
           : "③ Generating product image …",
       );
+      setProgress(15);
+
+      // Start a progress simulation for the long server action
+      const progressInterval = setInterval(() => {
+        setProgress((prev) => {
+          // Slowly crawl from current to 90%, never exceed 90 while processing
+          if (prev < 30) return prev + 2;
+          if (prev < 50) return prev + 1;
+          if (prev < 70) return prev + 0.5;
+          if (prev < 85) return prev + 0.2;
+          return Math.min(prev + 0.1, 90);
+        });
+      }, 2000);
+
+      // Update step text based on elapsed time
+      const stepInterval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 20 && prev < 30) setStep("④ AI is generating your product image …");
+          if (prev >= 30 && prev < 45) setStep("⑤ Compositing product into scene & harmonizing …");
+          if (prev >= 45 && prev < 60) setStep("⑥ Inpainting done! Generating video clip …");
+          if (prev >= 60 && prev < 80) setStep("⑦ Kling is animating the frame … (this takes a while)");
+          if (prev >= 80) setStep("⑧ Almost there — finalising video …");
+          return prev;
+        });
+      }, 3000);
 
       const next = await processVideoAction({
         ...input,
@@ -284,6 +313,10 @@ export function VideoWorkflowPanel() {
         maskRegion,
       });
 
+      clearInterval(progressInterval);
+      clearInterval(stepInterval);
+      setProgress(100);
+      setStep("✓ Done!");
       setResult(next);
 
       if (next.aiClipUrl) {
@@ -520,18 +553,18 @@ export function VideoWorkflowPanel() {
           <div className="flex items-center gap-3">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
             <span className="text-sm text-zinc-300">{step}</span>
+            <span className="ml-auto font-mono text-sm font-semibold text-emerald-400">
+              {Math.round(progress)}%
+            </span>
           </div>
-          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-800">
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
             <div
-              className="h-full rounded-full bg-linear-to-r from-emerald-600 via-emerald-400 to-emerald-600"
-              style={{
-                width: "70%",
-                animation: "pulse 2s ease-in-out infinite",
-              }}
+              className="h-full rounded-full bg-linear-to-r from-emerald-600 via-emerald-400 to-emerald-500 transition-all duration-1000 ease-out"
+              style={{ width: `${Math.round(progress)}%` }}
             />
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Scene analysis ~5s. Inpainting ~10s. Video generation 1-3 min.
+            Product image ~5s &bull; Scene analysis ~5s &bull; Compositing ~10s &bull; Video generation 1-5 min.
             Don&apos;t close this tab.
           </p>
         </div>
