@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   processVideoAction,
@@ -27,14 +27,18 @@ const defaultInput: WorkflowInput = {
   productImageUrl: "",
 };
 
-const AD_TIMESTAMP = 3;
-
 /* ═══════  Frame extraction (runs in browser via Canvas)  ══════════ */
+
+type FrameResult = {
+  dataUrl: string;
+  width: number;
+  height: number;
+};
 
 function extractFrame(
   videoUrl: string,
   timestamp: number,
-): Promise<string> {
+): Promise<FrameResult> {
   return new Promise((resolve, reject) => {
     const video = document.createElement("video");
     video.crossOrigin = "anonymous";
@@ -63,7 +67,11 @@ function extractFrame(
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
           cleanup();
-          resolve(canvas.toDataURL("image/jpeg", 0.85));
+          resolve({
+            dataUrl: canvas.toDataURL("image/jpeg", 0.85),
+            width: canvas.width,
+            height: canvas.height,
+          });
         } catch (err) {
           cleanup();
           reject(err);
@@ -98,6 +106,35 @@ function extractFrame(
   });
 }
 
+/* ═══════ Mask generation (black canvas + white rect = inpaint area) ═══════ */
+
+const MASK_REGION = { x: 0.35, y: 0.2, w: 0.3, h: 0.5 };
+
+function generateMaskDataUrl(
+  width: number,
+  height: number,
+  region = MASK_REGION,
+): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(
+    Math.round(region.x * width),
+    Math.round(region.y * height),
+    Math.round(region.w * width),
+    Math.round(region.h * height),
+  );
+
+  return canvas.toDataURL("image/png");
+}
+
 /* ═══════════════════════  Component  ══════════════════════════════ */
 
 export function VideoWorkflowPanel() {
@@ -106,11 +143,99 @@ export function VideoWorkflowPanel() {
   const [input, setInput] = useState<WorkflowInput>(defaultInput);
   const [result, setResult] = useState<ProcessVideoResult | null>(null);
 
+  /* ─── Timestamp picker state ─── */
+  const [adTimestamp, setAdTimestamp] = useState(3);
+  const [videoDuration, setVideoDuration] = useState(10);
+  const [previewFrame, setPreviewFrame] = useState<string | null>(null);
+
+  /* ─── Interactive mask drawing state ─── */
+  const [maskRegion, setMaskRegion] = useState(MASK_REGION);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
+  const [hasUserMask, setHasUserMask] = useState(false);
+  const maskContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleMaskMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      setDrawStart({ x, y });
+      setIsDrawing(true);
+    },
+    [],
+  );
+
+  const handleMaskMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!isDrawing || !drawStart) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      setMaskRegion({
+        x: Math.min(drawStart.x, x),
+        y: Math.min(drawStart.y, y),
+        w: Math.abs(x - drawStart.x),
+        h: Math.abs(y - drawStart.y),
+      });
+    },
+    [isDrawing, drawStart],
+  );
+
+  const handleMaskMouseUp = useCallback(() => {
+    if (isDrawing && drawStart) {
+      setHasUserMask(true);
+    }
+    setIsDrawing(false);
+    setDrawStart(null);
+  }, [isDrawing, drawStart]);
+
+  // Get video duration when URL changes
+  useEffect(() => {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.preload = "metadata";
+
+    video.addEventListener("loadedmetadata", () => {
+      if (video.duration && isFinite(video.duration)) {
+        setVideoDuration(video.duration);
+        setAdTimestamp(Math.round(video.duration * 0.25 * 10) / 10);
+      }
+      video.remove();
+    });
+
+    video.addEventListener("error", () => {
+      video.remove();
+    });
+
+    video.src = input.sourceVideoUrl;
+    video.load();
+  }, [input.sourceVideoUrl]);
+
+  // Grab a preview thumbnail when slider changes
+  const grabPreview = useCallback(
+    async (ts: number) => {
+      try {
+        const frame = await extractFrame(input.sourceVideoUrl, ts);
+        setPreviewFrame(frame.dataUrl);
+      } catch {
+        setPreviewFrame(null);
+      }
+    },
+    [input.sourceVideoUrl],
+  );
+
+  useEffect(() => {
+    const timeout = setTimeout(() => grabPreview(adTimestamp), 400);
+    return () => clearTimeout(timeout);
+  }, [adTimestamp, grabPreview]);
+
   const statusText = useMemo(() => {
     if (isProcessing) return step;
     if (result) {
-      if (result.processedVideoUrl !== defaultInput.sourceVideoUrl) {
-        return "✓ AI product placement video generated!";
+      if (result.aiClipUrl) {
+        return "✓ AI product placement video generated! Watch below.";
       }
       if (result.inpaintedFrameUrl) {
         return "✓ Product placed in frame (video gen unavailable)";
@@ -128,44 +253,46 @@ export function VideoWorkflowPanel() {
     setResult(null);
 
     try {
-      // ① Extract frame client-side
-      setStep("① Extracting video frame at " + AD_TIMESTAMP + "s …");
+      setStep(`① Extracting frame at ${adTimestamp.toFixed(1)}s …`);
       let frameDataUrl: string | undefined;
+      let maskDataUrl: string | undefined;
 
       try {
-        frameDataUrl = await extractFrame(input.sourceVideoUrl, AD_TIMESTAMP);
-        setStep("② Frame captured! Sending to Fal AI …");
+        const frame = await extractFrame(input.sourceVideoUrl, adTimestamp);
+        frameDataUrl = frame.dataUrl;
+        maskDataUrl = generateMaskDataUrl(frame.width, frame.height, maskRegion);
+        setStep("② Frame + mask captured! Analysing scene …");
       } catch (err) {
         console.warn("Frame extraction failed:", err);
-        setStep("⚠ Frame extraction failed (CORS). Falling back to overlay …");
+        setStep("⚠ Frame extraction failed (CORS). Falling back …");
         toast.warning(
           "Could not extract frame — video may block CORS. Using overlay mode.",
         );
       }
 
-      // ② + ③ Server action: inpaint + video generation
       setStep(
         frameDataUrl
-          ? "③ AI is placing your product in the scene & generating video … this takes 1-3 min"
+          ? "③ AI is analysing scene & painting your product … (~15s)"
           : "③ Generating product image …",
       );
 
       const next = await processVideoAction({
         ...input,
         frameDataUrl,
+        maskDataUrl,
+        timestamp: adTimestamp,
+        maskRegion,
       });
 
       setResult(next);
 
-      // Toast based on what worked
-      if (
-        next.inpaintedFrameUrl &&
-        next.processedVideoUrl !== input.sourceVideoUrl
-      ) {
-        toast.success("AI product placement video generated!");
+      if (next.aiClipUrl) {
+        toast.success(
+          "AI product placement video generated! The ad clip is spliced into the original video below.",
+        );
       } else if (next.inpaintedFrameUrl) {
         toast.success(
-          "Product placed in frame! Video generation wasn't available.",
+          "Product painted into frame! Video generation was unavailable.",
         );
       } else {
         toast.info("Using original video with shoppable overlay.");
@@ -185,7 +312,6 @@ export function VideoWorkflowPanel() {
   };
 
   const handleRetry = () => {
-    // Re-run with current inputs
     const fakeEvent = {
       preventDefault: () => {},
     } as React.FormEvent<HTMLFormElement>;
@@ -196,9 +322,10 @@ export function VideoWorkflowPanel() {
     <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
       <h2 className="text-xl font-semibold">AI Video Product Placement</h2>
       <p className="mt-2 text-sm text-zinc-400">
-        Paste a video URL and describe your product. AI extracts a frame,
-        paints your product into the scene, then generates a product
-        placement video — like Halftime.
+        Paste a video URL, describe your product, choose{" "}
+        <strong className="text-zinc-200">when</strong> in the video to
+        place the ad. AI extracts that frame, paints your product into the
+        scene, generates a video clip, and splices it into the original.
       </p>
 
       {/* ─── Form ─── */}
@@ -218,6 +345,94 @@ export function VideoWorkflowPanel() {
             required
           />
         </label>
+
+        {/* ─── Timestamp Picker ─── */}
+        <div className="flex flex-col gap-2 md:col-span-2">
+          <label className="text-sm text-zinc-300">
+            Ad Placement Time:{" "}
+            <span className="font-mono text-emerald-400">
+              {adTimestamp.toFixed(1)}s
+            </span>{" "}
+            <span className="text-zinc-500">
+              / {videoDuration.toFixed(1)}s
+            </span>
+          </label>
+          <input
+            type="range"
+            min={0.5}
+            max={Math.max(videoDuration - 0.5, 1)}
+            step={0.1}
+            value={adTimestamp}
+            onChange={(e) => setAdTimestamp(parseFloat(e.target.value))}
+            className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-emerald-500"
+          />
+          <div className="flex flex-col gap-3">
+            {previewFrame ? (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+                {/* Interactive mask-drawing canvas */}
+                <div
+                  ref={maskContainerRef}
+                  className="relative shrink-0 cursor-crosshair select-none overflow-hidden rounded-lg border-2 border-zinc-700 hover:border-emerald-500/60"
+                  style={{ maxWidth: 480 }}
+                  onMouseDown={handleMaskMouseDown}
+                  onMouseMove={handleMaskMouseMove}
+                  onMouseUp={handleMaskMouseUp}
+                  onMouseLeave={handleMaskMouseUp}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewFrame}
+                    alt="Frame preview"
+                    className="block w-full"
+                    draggable={false}
+                  />
+                  {/* Mask overlay */}
+                  <div
+                    className="pointer-events-none absolute border-2 border-dashed border-emerald-400 bg-emerald-400/20"
+                    style={{
+                      left: `${maskRegion.x * 100}%`,
+                      top: `${maskRegion.y * 100}%`,
+                      width: `${maskRegion.w * 100}%`,
+                      height: `${maskRegion.h * 100}%`,
+                    }}
+                  >
+                    <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-emerald-600/90 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                      Product area
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-emerald-400">
+                    {hasUserMask
+                      ? "✓ Custom region selected"
+                      : "Click & drag on the frame to mark where the product should appear"}
+                  </span>
+                  <span className="text-xs text-zinc-500">
+                    The green box shows the inpainting target area.
+                    AI will analyse the scene and paint your product naturally into
+                    this region, matching the lighting and perspective.
+                  </span>
+                  {hasUserMask && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMaskRegion(MASK_REGION);
+                        setHasUserMask(false);
+                      }}
+                      className="mt-1 w-fit rounded border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400 hover:text-zinc-200"
+                    >
+                      Reset to default
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <span className="text-xs text-zinc-500">
+                Loading frame preview…
+              </span>
+            )}
+          </div>
+        </div>
 
         <label className="flex flex-col gap-1 text-sm text-zinc-300">
           Brand
@@ -257,7 +472,8 @@ export function VideoWorkflowPanel() {
             required
           />
           <span className="text-xs text-zinc-500">
-            AI paints this product INTO a video frame, then animates it
+            AI paints this product INTO the video frame at your chosen
+            timestamp, then animates it
           </span>
         </label>
 
@@ -307,7 +523,7 @@ export function VideoWorkflowPanel() {
           </div>
           <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-800">
             <div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-600 via-emerald-400 to-emerald-600"
+              className="h-full rounded-full bg-linear-to-r from-emerald-600 via-emerald-400 to-emerald-600"
               style={{
                 width: "70%",
                 animation: "pulse 2s ease-in-out infinite",
@@ -315,7 +531,8 @@ export function VideoWorkflowPanel() {
             />
           </div>
           <p className="mt-2 text-xs text-zinc-500">
-            Video generation takes 1-3 minutes. Don&apos;t close this tab.
+            Scene analysis ~5s. Inpainting ~10s. Video generation 1-3 min.
+            Don&apos;t close this tab.
           </p>
         </div>
       )}
@@ -337,17 +554,21 @@ export function VideoWorkflowPanel() {
                   className="w-full max-w-md rounded-lg border border-zinc-700"
                 />
                 <p className="text-xs text-zinc-500">
-                  Fal AI (fast-sdxl-inpainting) painted your product into the
-                  video frame. This frame was then sent to Kling image-to-video
-                  to generate the clip below.
+                  Fal AI painted your product into the frame at{" "}
+                  {result.insertAtTimestamp.toFixed(1)}s.
+                  {result.aiClipUrl
+                    ? " This was animated into a 5s clip and spliced into the video below."
+                    : " Video generation was unavailable — showing original video with shoppable overlay."}
                 </p>
               </div>
             </div>
           ) : null}
 
-          {/* Generated video player */}
+          {/* Video player — splices AI clip into original */}
           <VibePlayer
-            videoUrl={result.processedVideoUrl}
+            originalVideoUrl={result.originalVideoUrl}
+            aiClipUrl={result.aiClipUrl}
+            insertAtTimestamp={result.insertAtTimestamp}
             adSlot={result.adSlot}
           />
         </div>

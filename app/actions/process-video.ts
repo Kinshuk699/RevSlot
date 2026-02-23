@@ -14,14 +14,27 @@ type ProcessVideoInput = {
   productImageUrl?: string;
   /** base64 data-URL of the extracted video frame (JPEG) */
   frameDataUrl?: string;
+  /** base64 data-URL of the inpainting mask (PNG, white=inpaint area) */
+  maskDataUrl?: string;
+  /** user-chosen timestamp in the video to place the product */
+  timestamp?: number;
+  /** user-drawn mask region (0-1 normalised coordinates) */
+  maskRegion?: { x: number; y: number; w: number; h: number };
 };
 
 export type ProcessVideoResult = {
   status: "ready";
-  processedVideoUrl: string;
+  /** The original source video URL (always returned for splicing) */
+  originalVideoUrl: string;
+  /** URL of the AI-generated clip with the product placed in it (null if pipeline failed) */
+  aiClipUrl: string | null;
+  /** The inpainted frame image URL */
   inpaintedFrameUrl: string | null;
+  /** Legacy — kept for fallback; equals aiClipUrl or originalVideoUrl */
+  processedVideoUrl: string;
   adSlot: AdSlot;
-  detectionTimestamp: number;
+  /** The timestamp at which the AI clip should be inserted */
+  insertAtTimestamp: number;
   savedToSupabase: boolean;
   saveError?: string;
 };
@@ -34,12 +47,53 @@ const DEFAULT_PRODUCT_IMAGE =
 const FAL_POLL_INTERVAL = 3_000;
 const FAL_MAX_POLLS = 90; // 90 × 3 s = 4.5 min max wait
 
-/* ═══════════ Step 1 — Inpaint product onto extracted frame ════════ */
+/* ═══════ Step 0 — Analyse the frame to understand the scene ═══════ */
+
+async function analyzeScene(
+  frameDataUrl: string,
+  falKey: string,
+): Promise<string | null> {
+  console.log("[Fal] Step 0 → Analysing scene for natural placement …");
+  try {
+    const res = await fetch("https://fal.run/fal-ai/llavav15-13b", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${falKey}`,
+      },
+      body: JSON.stringify({
+        image_url: frameDataUrl,
+        prompt:
+          "Describe this image in one concise sentence. Focus on: the setting/environment, " +
+          "key objects and surfaces visible (tables, desks, shelves, floors, hands, walls), " +
+          "and the lighting conditions (warm, cool, natural, artificial, directional).",
+      }),
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      console.warn("[Fal] Scene analysis failed:", res.status);
+      return null;
+    }
+
+    const data = (await res.json()) as { output?: string; result?: string };
+    const description = data.output ?? data.result ?? null;
+    console.log("[Fal] Scene description:", description);
+    return description;
+  } catch (err) {
+    console.warn("[Fal] Scene analysis exception:", err);
+    return null;
+  }
+}
+
+/* ═══════ Step 1 — Inpaint product onto extracted frame ════════ */
 
 async function inpaintProductOnFrame(input: {
   frameDataUrl: string;
+  maskDataUrl?: string;
   brand: string;
   productDescription: string;
+  sceneDescription?: string | null;
 }): Promise<string | null> {
   const falKey = process.env.FAL_KEY;
   if (!falKey) {
@@ -51,41 +105,58 @@ async function inpaintProductOnFrame(input: {
     ? `${input.productDescription} by ${input.brand}`
     : `a premium ${input.brand} product`;
 
+  // Build a context-aware prompt using scene analysis when available
+  const sceneContext = input.sceneDescription
+    ? `In this scene — ${input.sceneDescription} — `
+    : "In this scene, ";
+
   const prompt = [
-    `A photorealistic ${product}, naturally placed in this exact scene,`,
-    "perfectly matching the existing lighting, shadows, depth-of-field and color palette.",
-    "Commercial product photography quality, 8 k, seamless integration.",
+    `${sceneContext}a photorealistic ${product} has been naturally placed,`,
+    "seamlessly blending with the environment as if it was always part of the original photograph.",
+    "The product matches the exact perspective, lighting direction, shadow angles,",
+    "surface reflections, and color temperature of the surrounding scene.",
+    "Photorealistic, commercial product photography quality, 8k resolution.",
   ].join(" ");
 
   console.log("[Fal] Step 1 → Inpainting product onto frame …");
 
+  // Build request body — use proper fal-ai/inpaint endpoint with mask image
+  const body: Record<string, unknown> = {
+    model_name: "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+    image_url: input.frameDataUrl,
+    prompt,
+    negative_prompt:
+      "blurry, distorted, text, watermark, cartoon, low quality, unrealistic, floating, flying, " +
+      "out of place, different lighting, wrong perspective, pasted on, collage, composite, " +
+      "cut out, photoshopped, unnatural shadows",
+    num_inference_steps: 35,
+    guidance_scale: 7.5,
+  };
+
+  if (input.maskDataUrl) {
+    body.mask_url = input.maskDataUrl;
+  }
+
   try {
-    const res = await fetch("https://fal.run/fal-ai/fast-sdxl-inpainting", {
+    const res = await fetch("https://fal.run/fal-ai/inpaint", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Key ${falKey}`,
       },
-      body: JSON.stringify({
-        image_url: input.frameDataUrl,
-        prompt,
-        negative_prompt:
-          "blurry, distorted, text, watermark, cartoon, low quality, unrealistic, floating, out of place",
-        mask: { x: 0.35, y: 0.2, width: 0.3, height: 0.5 },
-        num_inference_steps: 35,
-        guidance_scale: 7.5,
-        strength: 0.95,
-      }),
+      body: JSON.stringify(body),
       cache: "no-store",
     });
 
     if (!res.ok) {
-      console.error("[Fal] Inpaint error", res.status, await res.text().catch(() => ""));
+      const errText = await res.text().catch(() => "");
+      console.error("[Fal] Inpaint error", res.status, errText);
       return null;
     }
 
-    const data = (await res.json()) as { images?: { url?: string }[] };
-    const url = data.images?.[0]?.url ?? null;
+    // fal-ai/inpaint returns { image: { url } } (singular, not array)
+    const data = (await res.json()) as { image?: { url?: string } };
+    const url = data.image?.url ?? null;
     console.log("[Fal] Inpainted:", url ? "✓ " + url.slice(0, 80) : "✗ no image");
     return url;
   } catch (err) {
@@ -236,17 +307,26 @@ export async function processVideoAction(
   if (!userId) throw new Error("You must be signed in.");
   if (!input.sourceVideoUrl) throw new Error("Video URL is required.");
 
-  const timestamp = DEFAULT_TIMESTAMP;
+  const timestamp = input.timestamp ?? DEFAULT_TIMESTAMP;
   let inpaintedFrameUrl: string | null = null;
   let generatedVideoUrl: string | null = null;
 
-  /* ── Real pipeline: frame → inpaint → video ── */
+  /* ── Real pipeline: analyse → inpaint → video ── */
   if (input.frameDataUrl) {
+    // 0. Analyse the scene for natural placement context
+    let sceneDescription: string | null = null;
+    const falKey = process.env.FAL_KEY;
+    if (falKey) {
+      sceneDescription = await analyzeScene(input.frameDataUrl, falKey);
+    }
+
     // 1. Inpaint product onto the extracted frame
     inpaintedFrameUrl = await inpaintProductOnFrame({
       frameDataUrl: input.frameDataUrl,
+      maskDataUrl: input.maskDataUrl,
       brand: input.brand,
       productDescription: input.productDescription,
+      sceneDescription,
     });
 
     // 2. Turn the inpainted frame into a video clip
@@ -268,11 +348,13 @@ export async function processVideoAction(
   const processedVideoUrl = generatedVideoUrl || input.sourceVideoUrl;
 
   const adSlot: AdSlot = {
-    timestamp: generatedVideoUrl ? 2 : timestamp,
+    timestamp,
     productName: `${input.brand} Featured Product`,
     productImageUrl: bubbleImageUrl || input.productImageUrl || DEFAULT_PRODUCT_IMAGE,
     buyUrl: input.buyUrl || "https://stripe.com",
-    placement: { x: 0.5, y: 0.4 },
+    placement: input.maskRegion
+      ? { x: input.maskRegion.x + input.maskRegion.w / 2, y: input.maskRegion.y }
+      : { x: 0.5, y: 0.4 },
   };
 
   const saveResult = await saveProcessedVideo({
@@ -285,10 +367,12 @@ export async function processVideoAction(
 
   return {
     status: "ready",
-    processedVideoUrl,
+    originalVideoUrl: input.sourceVideoUrl,
+    aiClipUrl: generatedVideoUrl,
     inpaintedFrameUrl,
+    processedVideoUrl,
     adSlot,
-    detectionTimestamp: timestamp,
+    insertAtTimestamp: timestamp,
     savedToSupabase: saveResult.savedToSupabase,
     saveError: "saveError" in saveResult ? saveResult.saveError : undefined,
   };
