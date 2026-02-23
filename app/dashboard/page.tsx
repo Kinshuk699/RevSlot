@@ -2,6 +2,7 @@ import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase";
+import { VibePlayer } from "@/components/VibePlayer";
 
 export default async function DashboardPage() {
   const { userId } = await auth();
@@ -50,6 +51,26 @@ export default async function DashboardPage() {
               Profile created: {profile?.created_at ? new Date(profile.created_at).toLocaleString() : "Not found"}
             </p>
           </article>
+        </section>
+
+        <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
+          <h2 className="text-xl font-semibold">Interactive Vibe Player Demo</h2>
+          <p className="mt-2 text-sm text-zinc-400">
+            The player checks time every 500ms. Around 3.0s, the video pauses and a shoppable bubble appears.
+          </p>
+
+          <div className="mt-5">
+            <VibePlayer
+              videoUrl="https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4"
+              adSlot={{
+                timestamp: 3,
+                productName: "High-End Studio Bottle",
+                productImageUrl:
+                  "https://images.unsplash.com/photo-1523362628745-0c100150b504?auto=format&fit=crop&w=400&q=80",
+                buyUrl: "https://stripe.com",
+              }}
+            />
+          </div>
         </section>
       </div>
     </main>
