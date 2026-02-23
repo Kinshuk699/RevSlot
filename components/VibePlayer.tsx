@@ -8,6 +8,8 @@ export type AdSlot = {
   productName: string;
   productImageUrl: string;
   buyUrl: string;
+  /** Where to place the product in the frame (0-1 range) */
+  placement?: { x: number; y: number };
 };
 
 type VibePlayerProps = {
@@ -65,23 +67,30 @@ export function VibePlayer({ videoUrl, adSlot }: VibePlayerProps) {
     <div className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-4">
       <div className="relative overflow-hidden rounded-xl border border-zinc-800">
         <video ref={videoRef} src={videoUrl} controls className="h-auto w-full bg-black" playsInline />
+
+        {/* Subtle darkening scrim when product is placed */}
+        {showOverlay && (
+          <div className="pointer-events-none absolute inset-0 bg-black/20 transition-opacity duration-300" />
+        )}
+
         <ShoppableBubble
           visible={showOverlay}
           productName={adSlot.productName}
           imageUrl={adSlot.productImageUrl}
           buyUrl={adSlot.buyUrl}
           onClose={handleClose}
+          position={adSlot.placement}
         />
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-        <span>Ad slot timestamp: {adSlot.timestamp.toFixed(1)}s</span>
+        <span>Ad triggers at {adSlot.timestamp.toFixed(1)}s</span>
         <button
           type="button"
           onClick={handleReplay}
           className="rounded-md border border-zinc-700 px-2.5 py-1 font-medium text-zinc-200 hover:border-zinc-500"
         >
-          Replay Demo
+          Replay
         </button>
       </div>
     </div>
