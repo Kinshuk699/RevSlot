@@ -81,7 +81,7 @@ export default async function CreatePage() {
               {PLAN_LABELS[plan]} plan.
             </p>
             <Link
-              href="/#pricing"
+              href="/pricing"
               className="mt-5 inline-block rounded-lg bg-[#36A64F] px-6 py-2.5 font-['Space_Mono'] text-xs font-bold uppercase tracking-wider text-white hover:bg-[#36A64F]/90 transition"
             >
               Upgrade Plan

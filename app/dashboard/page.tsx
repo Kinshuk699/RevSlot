@@ -3,7 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase";
 import { VideoHistory } from "@/components/VideoHistory";
-import { Film, Crown, Calendar, Plus, ArrowUpRight } from "lucide-react";
+import { Film, Crown, Calendar, Plus } from "lucide-react";
 
 /* ─── Plan limits ─── */
 const PLAN_LIMITS: Record<string, number> = {
@@ -55,19 +55,11 @@ export default async function DashboardPage() {
     <main className="min-h-screen bg-[#fffeec] px-6 py-14 text-black">
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-10">
         {/* ─── Header ─── */}
-        <header className="flex items-center justify-between">
-          <div>
-            <h1 className="font-['Space_Grotesk'] text-3xl font-bold tracking-tight">Dashboard</h1>
-            <p className="mt-2 text-sm text-black/50" style={{ fontFamily: "'Inter', sans-serif" }}>
-              Your AI product placement studio at a glance.
-            </p>
-          </div>
-          <Link
-            href="/"
-            className="flex items-center gap-1.5 rounded-lg border border-black/10 px-4 py-2 font-['Space_Mono'] text-xs font-medium uppercase tracking-wider hover:border-black/30 transition"
-          >
-            Home <ArrowUpRight className="h-3.5 w-3.5" />
-          </Link>
+        <header>
+          <h1 className="font-['Space_Grotesk'] text-3xl font-bold tracking-tight">Dashboard</h1>
+          <p className="mt-2 text-sm text-black/50" style={{ fontFamily: "'Inter', sans-serif" }}>
+            Your AI product placement studio at a glance.
+          </p>
         </header>
 
         {/* ─── Stats row ─── */}
@@ -81,7 +73,7 @@ export default async function DashboardPage() {
               {PLAN_LABELS[plan] ?? plan}
             </p>
             {plan === "free" && (
-              <Link href="/#pricing" className="mt-2 inline-block font-['Space_Mono'] text-xs uppercase tracking-wider text-[#36A64F] hover:text-[#36A64F]/70 transition">
+              <Link href="/pricing" className="mt-2 inline-block font-['Space_Mono'] text-xs uppercase tracking-wider text-[#36A64F] hover:text-[#36A64F]/70 transition">
                 Upgrade →
               </Link>
             )}
@@ -147,7 +139,7 @@ export default async function DashboardPage() {
               You&apos;ve used all {limit} video{limit > 1 ? "s" : ""} on the {PLAN_LABELS[plan]} plan.
             </p>
             <Link
-              href="/#pricing"
+              href="/pricing"
               className="mt-4 inline-block rounded-lg bg-[#36A64F] px-5 py-2 font-['Space_Mono'] text-xs font-bold uppercase tracking-wider text-white hover:bg-[#36A64F]/90 transition"
             >
               Upgrade Plan
