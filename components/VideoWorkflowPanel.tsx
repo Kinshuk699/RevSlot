@@ -412,16 +412,16 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
         }
       }
 
-      setProgressMsg("📤 Sending to AI Director (GPT-4o) …");
-      addLog("📤 Sending frames + product brief to AI Director (GPT-4o) …");
-      addLog("⏳ Director analyses video → picks placement → writes prompts");
-      addLog("⏳ Then SDXL composites → Kling generates video (3-8 min)");
+      setProgressMsg("Sending to AI Director (GPT-4o) …");
+      addLog("Sending frames + product brief to AI Director (GPT-4o) …");
+      addLog("Director analyses video → picks placement → writes prompts");
+      addLog("Then SDXL composites → Kling generates video (3-8 min)");
 
       // Upload local video file to Supabase storage for persistent URL
       let persistentVideoUrl = input.sourceVideoUrl;
       if (uploadedVideoFileRef.current && input.sourceVideoUrl.startsWith("blob:")) {
-        addLog("☁️ Uploading video to cloud storage …");
-        setProgressMsg("☁️ Uploading video …");
+        addLog("Uploading video to cloud storage …");
+        setProgressMsg("Uploading video …");
         try {
           const formData = new FormData();
           formData.append("file", uploadedVideoFileRef.current);
@@ -453,9 +453,9 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       }
 
       if (res.aiClipUrl) {
-        addLog("🎉 Video generated successfully!");
+        addLog("Video generated successfully!");
       } else {
-        addLog("⚠ Pipeline completed but no video was generated");
+        addLog("Pipeline completed but no video was generated");
       }
 
       if (res.savedToSupabase) {
@@ -466,7 +466,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       }
 
       setResult(res);
-      setProgressMsg("✅ Done!");
+      setProgressMsg("Done!");
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Pipeline failed.";
       addLog(`✗ ERROR: ${msg}`);
@@ -487,7 +487,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       {/* ── FORM ── */}
       <div className="bg-white/60 rounded-2xl p-6 space-y-5 border border-black/10">
         <h2 className="text-xl font-['Space_Grotesk'] font-bold text-black flex items-center gap-2">
-          🎬 AI Director Pipeline
+          AI DIRECTOR PIPELINE
         </h2>
         <p className="text-sm font-['Inter'] text-black/50">
           Upload your video and product details — the AI Director will decide the
@@ -497,9 +497,9 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
         {/* One-click demo banner */}
         <div className="rounded-xl border border-[#36A64F]/30 bg-[#36A64F]/5 p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex-1">
-            <p className="text-sm font-['Space_Grotesk'] font-bold text-[#36A64F]">🎯 Try a One-Click Demo</p>
+            <p className="text-sm font-['Space_Grotesk'] font-bold text-[#36A64F]">Try a One-Click Demo</p>
             <p className="text-xs font-['Inter'] text-[#36A64F]/60 mt-0.5">
-              Loads a sample Nike video + product image. Just hit the green button to watch the full AI pipeline run.
+              Loads a sample video + product brief + product (Nike Shoes) image + link to the shoe. Just hit the green button to watch the full AI pipeline run!
             </p>
           </div>
           <button
@@ -570,7 +570,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
               />
             ) : (
               <div className="flex items-center gap-3">
-                <span className="text-xs font-['Inter'] text-[#36A64F]">✅ {uploadedFileName}</span>
+                <span className="text-xs font-['Inter'] text-[#36A64F]">Uploaded: {uploadedFileName}</span>
                 <button
                   type="button"
                   onClick={clearUpload}
@@ -631,7 +631,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
               />
             ) : (
               <div className="flex items-center gap-3">
-                <span className="text-xs font-['Inter'] text-[#36A64F]">✅ {uploadedImageName}</span>
+                <span className="text-xs font-['Inter'] text-[#36A64F]">Uploaded: {uploadedImageName}</span>
                 <button
                   type="button"
                   onClick={clearImageUpload}
@@ -693,28 +693,28 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
           }
           className="w-full py-3 rounded-xl font-['Space_Mono'] text-sm font-bold uppercase tracking-wider text-white bg-[#36A64F] hover:bg-[#36A64F]/90 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
-          {loading ? "🎬 AI Director is working …" : "🚀 Let AI Director Place Product"}
+          {loading ? "AI Director is working …" : "Let AI Director Place Product"}
         </button>
       </div>
 
       {/* ── LIVE LOG PANEL ── */}
       {(loading || liveLogs.length > 0) && (() => {
         const FRIENDLY_MESSAGES = [
-          "🍳 Cooking something up for you …",
-          "🎬 Director is analyzing your video frame by frame …",
-          "🔍 Finding the perfect moment for product placement …",
-          "🧠 AI is brainstorming creative placements …",
-          "🎨 Crafting a seamless product integration …",
-          "✂️ Snipping the best frames for your product …",
-          "🎥 Our AI director is setting up the shot …",
-          "🪄 Inserting your product into the scene …",
-          "💡 Figuring out the most natural-looking placement …",
-          "🎞️ Stitching everything together beautifully …",
-          "⚡ Almost there, adding the finishing touches …",
-          "🍿 Patience pays off — this is going to look great …",
-          "🔮 The AI is working its magic …",
-          "🎯 Fine-tuning the placement for perfection …",
-          "🚀 Wrapping up — your video is nearly ready …",
+          "Cooking something up for you …",
+          "Director is analyzing your video frame by frame …",
+          "Finding the perfect moment for product placement …",
+          "AI is brainstorming creative placements …",
+          "Crafting a seamless product integration …",
+          "Snipping the best frames for your product …",
+          "Our AI director is setting up the shot …",
+          "Inserting your product into the scene …",
+          "Figuring out the most natural-looking placement …",
+          "Stitching everything together beautifully …",
+          "Almost there, adding the finishing touches …",
+          "Patience pays off — this is going to look great …",
+          "The AI is working its magic …",
+          "Fine-tuning the placement for perfection …",
+          "Wrapping up — your video is nearly ready …",
         ];
         const currentMsg = FRIENDLY_MESSAGES[friendlyStep % FRIENDLY_MESSAGES.length];
         const minutes = Math.floor(elapsedSec / 60);
@@ -761,8 +761,8 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
               <div className="text-center py-2">
                 <p className="text-sm font-['Space_Mono'] text-black/50">
                   {liveLogs.some((l) => l.includes("✗") || l.includes("ERROR"))
-                    ? "⚠️ Something went wrong — check the error below"
-                    : "✅ All done! Your video is ready below"}
+                    ? "Something went wrong — check the error below"
+                    : "All done! Your video is ready below"}
                 </p>
               </div>
             )}

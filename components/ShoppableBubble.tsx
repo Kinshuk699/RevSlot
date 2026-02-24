@@ -31,7 +31,7 @@ export function ShoppableBubble({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: 12 }}
           transition={{ duration: 0.3, ease: "easeOut" }}
-          className="absolute bottom-4 left-1/2 z-30 -translate-x-1/2"
+          className="absolute bottom-4 right-4 z-30"
         >
           <div className="flex items-center gap-2.5 rounded-full border border-white/15 bg-white/15 py-1.5 pl-1.5 pr-1.5 shadow-2xl backdrop-blur-xl">
             {/* Product thumbnail */}
