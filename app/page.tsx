@@ -1,21 +1,14 @@
 import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
+import { redirect } from "next/navigation";
 import { PricingGrid } from "@/components/PricingCard";
-import { getSupabaseServiceRoleClient } from "@/lib/supabase";
 
 export default async function Home() {
   const { userId } = await auth();
 
-  // Fetch plan for logged-in users so pricing cards reflect current subscription
-  let currentPlan: string | undefined;
+  // Signed-in users go straight to the creator workspace
   if (userId) {
-    const supabase = getSupabaseServiceRoleClient();
-    const { data } = await supabase
-      .from("profiles")
-      .select("plan")
-      .eq("clerk_user_id", userId)
-      .single();
-    currentPlan = data?.plan ?? "free";
+    redirect("/create");
   }
 
   return (
@@ -53,31 +46,21 @@ export default async function Home() {
             </span>
           </div>
 
-          {userId ? (
-            <div className="mt-8 flex items-center justify-center gap-3">
-              <Link
-                href="/dashboard"
-                className="rounded-lg bg-[#36A64F] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#36A64F]/90"
-              >
-                Go to Dashboard
-              </Link>
-            </div>
-          ) : (
-            <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
-              <Link
-                href="/sign-up"
-                className="rounded-lg bg-[#36A64F] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#36A64F]/90"
-              >
-                Get Started Free
-              </Link>
-              <Link
-                href="/sign-in"
-                className="rounded-lg border border-black/20 px-5 py-2.5 text-sm font-semibold text-black transition hover:border-black/40"
-              >
-                Sign In
-              </Link>
-            </div>
-          )}
+          {/* CTA — only shown to unauthenticated visitors */}
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/sign-up"
+              className="rounded-lg bg-[#36A64F] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#36A64F]/90"
+            >
+              Get Started Free
+            </Link>
+            <Link
+              href="/sign-in"
+              className="rounded-lg border border-black/20 px-5 py-2.5 text-sm font-semibold text-black transition hover:border-black/40"
+            >
+              Sign In
+            </Link>
+          </div>
         </section>
 
         {/* ─── How it works ─── */}
@@ -156,7 +139,7 @@ export default async function Home() {
         {/* ─── Pricing ─── */}
         <section id="pricing" className="mt-20">
           <h2 className="mb-8 text-center font-['Space_Grotesk'] text-2xl font-bold tracking-tight">Pricing</h2>
-          <PricingGrid currentPlan={currentPlan} />
+          <PricingGrid />
         </section>
       </main>
 

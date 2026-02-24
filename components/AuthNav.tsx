@@ -18,19 +18,6 @@ export function AuthNav() {
         </Link>
 
         <div className="flex items-center gap-2">
-          <Link
-            href="/"
-            className="rounded-md border border-black/10 px-3 py-1.5 font-['Space_Mono'] text-xs font-medium uppercase tracking-wider text-black/70 hover:border-black/30"
-          >
-            Home
-          </Link>
-          <Link
-            href="/dashboard"
-            className="rounded-md border border-black/10 px-3 py-1.5 font-['Space_Mono'] text-xs font-medium uppercase tracking-wider text-black/70 hover:border-black/30"
-          >
-            Dashboard
-          </Link>
-
           <SignedOut>
             <SignInButton mode="redirect">
               <button className="rounded-md border border-black/10 px-3 py-1.5 font-['Space_Mono'] text-xs font-semibold uppercase tracking-wider text-black hover:border-black/30">
@@ -45,6 +32,18 @@ export function AuthNav() {
           </SignedOut>
 
           <SignedIn>
+            <Link
+              href="/create"
+              className="rounded-md bg-[#36A64F] px-3 py-1.5 font-['Space_Mono'] text-xs font-semibold uppercase tracking-wider text-white hover:bg-[#36A64F]/90 transition"
+            >
+              + Create
+            </Link>
+            <Link
+              href="/dashboard"
+              className="rounded-md border border-black/10 px-3 py-1.5 font-['Space_Mono'] text-xs font-medium uppercase tracking-wider text-black/70 hover:border-black/30"
+            >
+              Dashboard
+            </Link>
             <SignOutButton>
               <button className="rounded-md border border-black/10 px-3 py-1.5 font-['Space_Mono'] text-xs font-semibold uppercase tracking-wider text-black hover:border-black/30">
                 Sign Out

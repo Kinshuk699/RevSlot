@@ -7,7 +7,8 @@
 | `/`                            | Public   | Landing page — hero, How It Works, Use Cases, Tech Stack, Pricing grid   |
 | `/sign-in`                     | Public   | Clerk-hosted sign-in (catch-all `[[...sign-in]]`)                        |
 | `/sign-up`                     | Public   | Clerk-hosted sign-up (catch-all `[[...sign-up]]`)                        |
-| `/dashboard`                   | Private  | Main dashboard — plan stats, VideoWorkflowPanel, VideoHistory            |
+| `/dashboard`                   | Private  | Dashboard overview — plan stats, "Create New Video" CTA, VideoHistory   |
+| `/create`                      | Private  | Video generator — AI Director pipeline (VideoWorkflowPanel)             |
 
 ## API Routes
 
@@ -28,7 +29,7 @@
 
 | File              | Protects                                  | Allows               |
 | ----------------- | ----------------------------------------- | -------------------- |
-| `middleware.ts`   | `/dashboard(.*)`, `/api/checkout(.*)`, `/api/upload(.*)` | `/api/webhook(.*)` (public for Stripe) |
+| `middleware.ts`   | `/dashboard(.*)`, `/create(.*)`, `/api/checkout(.*)`, `/api/upload(.*)` | `/api/webhook(.*)` (public for Stripe) |
 
 ---
 
