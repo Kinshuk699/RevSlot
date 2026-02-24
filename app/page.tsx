@@ -2,6 +2,7 @@ import Link from "next/link";
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { PricingGrid } from "@/components/PricingCard";
+import { HeroAnimation } from "@/components/HeroAnimation";
 
 export default async function Home() {
   const { userId } = await auth();
@@ -15,52 +16,44 @@ export default async function Home() {
     <div className="min-h-screen bg-[#fffeec] text-black">
       <main className="mx-auto flex w-full max-w-6xl flex-col px-6 py-16 sm:px-8 lg:px-10">
         {/* ─── Hero ─── */}
-        <section className="mx-auto flex max-w-3xl flex-col items-center text-center">
-          <span className="mb-4 inline-block rounded-full border border-[#36A64F]/30 bg-[#36A64F]/10 px-4 py-1 font-['Space_Mono'] text-xs font-bold uppercase tracking-widest text-[#36A64F]">
+        <section className="mx-auto flex max-w-4xl flex-col items-center text-center">
+          <span className="mb-6 inline-block rounded-full border border-[#36A64F]/30 bg-[#36A64F]/10 px-4 py-1 font-['Space_Mono'] text-xs font-bold uppercase tracking-widest text-[#36A64F]">
             VIBE CODING HACKATHON 2026
           </span>
-          <h1 className="font-['Space_Grotesk'] text-5xl font-bold tracking-tight sm:text-6xl">
-            Rev<span className="text-[#36A64F]">Slot</span>
+
+          <h1 className="font-['Space_Grotesk'] text-5xl font-bold tracking-tight sm:text-7xl">
+            <span className="text-black/80">Don&apos;t edit,</span>{" "}
+            <span className="italic text-[#36A64F]">just upload</span>
           </h1>
-          <p className="mt-4 text-lg text-[#1a1a1a] sm:text-xl">
-            AI-Powered Visual Commerce — turn any video into a shoppable storefront
-          </p>
-          <p className="mt-2 max-w-xl text-sm text-black/50">
-            Our AI Director analyzes your video, picks the perfect moment, and seamlessly places
-            any product into the scene using generative AI. No editing skills needed.
+
+          <p className="mt-5 max-w-xl text-lg text-[#1a1a1a]/60 sm:text-xl">
+            The AI that turns any video into a shoppable storefront —<br className="hidden sm:inline" /> seamless product placement in every frame.
           </p>
 
-          {/* Social proof badges */}
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-['Space_Mono'] text-xs uppercase tracking-widest text-black/50">
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2 w-2 rounded-full bg-[#36A64F]" />
-              GPT-4o Vision
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2 w-2 rounded-full bg-[#36A64F]" />
-              Flux Kontext Max
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="inline-block h-2 w-2 rounded-full bg-[#36A64F]" />
-              Kling Video
-            </span>
+          {/* ─── Ribbon animation ─── */}
+          <div className="mt-6 w-full">
+            <HeroAnimation />
           </div>
 
-          {/* CTA — only shown to unauthenticated visitors */}
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+          {/* CTA */}
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
             <Link
               href="/sign-up"
-              className="rounded-lg bg-[#36A64F] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[#36A64F]/90"
+              className="rounded-lg bg-[#36A64F] px-7 py-3 font-['Space_Mono'] text-sm font-bold uppercase tracking-wider text-white transition hover:bg-[#36A64F]/90"
             >
               Get Started Free
             </Link>
             <Link
               href="/sign-in"
-              className="rounded-lg border border-black/20 px-5 py-2.5 text-sm font-semibold text-black transition hover:border-black/40"
+              className="rounded-lg border border-black/20 px-6 py-3 font-['Space_Mono'] text-sm font-bold uppercase tracking-wider text-black transition hover:border-black/40"
             >
               Sign In
             </Link>
           </div>
+
+          <p className="mt-4 font-['Space_Mono'] text-xs uppercase tracking-widest text-black/30">
+            Available free · No credit card required
+          </p>
         </section>
 
         {/* ─── How it works ─── */}
