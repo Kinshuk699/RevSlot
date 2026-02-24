@@ -163,6 +163,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const uploadedBlobUrlRef = useRef<string | null>(null);
   const uploadedImageBlobUrlRef = useRef<string | null>(null);
+  const uploadedVideoFileRef = useRef<File | null>(null);
 
   /* ── Campo helpers ── */
   const addLog = useCallback((msg: string) => {
@@ -180,6 +181,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       URL.revokeObjectURL(uploadedBlobUrlRef.current);
       uploadedBlobUrlRef.current = null;
     }
+    uploadedVideoFileRef.current = null;
     setUploadedFileName("");
     setInput((p) => ({ ...p, sourceVideoUrl: e.target.value }));
   };
@@ -213,6 +215,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       URL.revokeObjectURL(uploadedBlobUrlRef.current);
     }
     uploadedBlobUrlRef.current = blobUrl;
+    uploadedVideoFileRef.current = file;
     setUploadedFileName(file.name);
     setError(null);
     setInput((p) => ({ ...p, sourceVideoUrl: blobUrl }));
@@ -223,6 +226,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       URL.revokeObjectURL(uploadedBlobUrlRef.current);
       uploadedBlobUrlRef.current = null;
     }
+    uploadedVideoFileRef.current = null;
     setUploadedFileName("");
     setSampledFrames([]);
     lastSampledUrl.current = "";
@@ -427,8 +431,27 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       addLog("⏳ Director analyses video → picks placement → writes prompts");
       addLog("⏳ Then SDXL composites → Kling generates video (3-8 min)");
 
+      // Upload local video file to Supabase storage for persistent URL
+      let persistentVideoUrl = input.sourceVideoUrl;
+      if (uploadedVideoFileRef.current && input.sourceVideoUrl.startsWith("blob:")) {
+        addLog("☁️ Uploading video to cloud storage …");
+        setProgressMsg("☁️ Uploading video …");
+        try {
+          const formData = new FormData();
+          formData.append("file", uploadedVideoFileRef.current);
+          const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+          const uploadData = await uploadRes.json();
+          if (!uploadRes.ok) throw new Error(uploadData.error || "Upload failed");
+          persistentVideoUrl = uploadData.url;
+          addLog("✓ Video uploaded to cloud storage");
+        } catch (uploadErr) {
+          addLog("⚠ Cloud upload failed: " + (uploadErr instanceof Error ? uploadErr.message : "unknown"));
+          addLog("Continuing with local reference (video history may not replay)");
+        }
+      }
+
       const res = await processVideoAction({
-        sourceVideoUrl: input.sourceVideoUrl,
+        sourceVideoUrl: persistentVideoUrl,
         productDescription: input.productDescription,
         productImageUrl: productImageForServer,
         buyUrl: input.buyUrl || undefined,
