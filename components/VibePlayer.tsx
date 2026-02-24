@@ -68,18 +68,21 @@ export function VibePlayer({
   const hasSplice = !!aiClipUrl;
 
   /* ─── Compute combined timeline for spliced mode ─── */
-  // Total = before (0 → insertAt) + AI clip + after (insertAt → end)
+  // The AI clip REPLACES aiClipDuration seconds of the original.
+  // Before: 0 → insertAt | AI clip: aiClipDuration | After: (insertAt + aiClipDuration) → end
+  const afterResumePoint = Math.min(insertAtTimestamp + aiClipDuration, originalDuration);
   const splicedTotal = hasSplice
-    ? insertAtTimestamp + aiClipDuration + Math.max(0, originalDuration - insertAtTimestamp)
+    ? insertAtTimestamp + aiClipDuration + Math.max(0, originalDuration - afterResumePoint)
     : originalDuration;
 
   const getSplicedPosition = useCallback((): number => {
     if (!hasSplice || viewMode !== "spliced") return currentTime;
     if (phase === "original-before") return currentTime;
     if (phase === "ai-clip") return insertAtTimestamp + currentTime;
-    // original-after
-    return insertAtTimestamp + aiClipDuration + (currentTime - insertAtTimestamp);
-  }, [hasSplice, viewMode, phase, currentTime, insertAtTimestamp, aiClipDuration]);
+    // original-after: currentTime is in original video time (afterResumePoint onward)
+    const afterResumePoint = Math.min(insertAtTimestamp + aiClipDuration, originalDuration || Infinity);
+    return insertAtTimestamp + aiClipDuration + (currentTime - afterResumePoint);
+  }, [hasSplice, viewMode, phase, currentTime, insertAtTimestamp, aiClipDuration, originalDuration]);
 
   /* ─── Track time from active video ─── */
   useEffect(() => {
@@ -157,24 +160,33 @@ export function VibePlayer({
       aiVideoRef.current.play().catch(() => undefined);
       setShowOverlay(true);
 
-      // Pre-position original video so the crossfade back shows the correct frame
+      // Pre-position original video AHEAD by the AI clip duration.
+      // This way, when the crossfade back happens, the original shows a LATER
+      // frame — the product naturally "cuts away" instead of vanishing.
       if (originalVideoRef.current) {
-        originalVideoRef.current.currentTime = insertAtTimestamp;
+        const resumeAt = Math.min(
+          insertAtTimestamp + aiClipDuration,
+          originalVideoRef.current.duration || insertAtTimestamp + 5,
+        );
+        originalVideoRef.current.currentTime = resumeAt;
       }
     }
-  }, [phase, insertAtTimestamp]);
+  }, [phase, insertAtTimestamp, aiClipDuration]);
 
-  // When AI clip ends → switch back to original video
+  // When AI clip ends → switch back to original video at a LATER point
   const handleAiClipEnded = useCallback(() => {
     setPhase("original-after");
     setShowOverlay(false);
 
     const video = originalVideoRef.current;
     if (video) {
-      video.currentTime = insertAtTimestamp;
+      // Skip ahead in the original so the product doesn't "vanish" at the same frame.
+      // The AI clip replaces aiClipDuration seconds of the original video.
+      const resumeAt = Math.min(insertAtTimestamp + aiClipDuration, video.duration || insertAtTimestamp + 5);
+      video.currentTime = resumeAt;
       video.play().catch(() => undefined);
     }
-  }, [insertAtTimestamp]);
+  }, [insertAtTimestamp, aiClipDuration]);
 
   /* ─── Fallback: single-video overlay mode (no AI clip) ─── */
   useEffect(() => {
@@ -279,11 +291,12 @@ export function VibePlayer({
       }
       setCurrentTime(aiTime);
     } else {
-      // Seeking into "original-after"
+      // Seeking into "original-after" — maps to (insertAt + aiClipDuration) onward in original
       aiVideoRef.current?.pause();
       setPhase("original-after");
       setShowOverlay(false);
-      const origTime = insertAtTimestamp + (target - insertAtTimestamp - aiClipDuration);
+      const afterResumePoint = Math.min(insertAtTimestamp + aiClipDuration, originalDuration);
+      const origTime = afterResumePoint + (target - insertAtTimestamp - aiClipDuration);
       if (originalVideoRef.current) {
         originalVideoRef.current.currentTime = origTime;
         if (isPlaying) originalVideoRef.current.play().catch(() => undefined);
