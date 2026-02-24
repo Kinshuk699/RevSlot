@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
     const session = event.data.object;
     const clerkUserId = session.metadata?.clerkUserId;
     const priceId = session.metadata?.priceId;
+    const customerId = typeof session.customer === "string" ? session.customer : null;
 
     if (clerkUserId) {
       const creatorPriceId = process.env.NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID;
@@ -43,20 +44,39 @@ export async function POST(req: NextRequest) {
       if (priceId === studioPriceId) plan = "studio";
       else if (priceId === creatorPriceId) plan = "creator";
 
-      console.log("[Webhook] clerkUserId:", clerkUserId, "priceId:", priceId, "→ plan:", plan);
+      console.log("[Webhook] clerkUserId:", clerkUserId, "priceId:", priceId, "→ plan:", plan, "customer:", customerId);
+
+      const updatePayload: Record<string, string> = { plan };
+      if (customerId) updatePayload.stripe_customer_id = customerId;
 
       await supabase
         .from("profiles")
-        .update({ plan })
+        .update(updatePayload)
         .eq("clerk_user_id", clerkUserId);
     }
   }
 
   if (event.type === "customer.subscription.deleted") {
     const subscription = event.data.object;
+    const customerId = typeof subscription.customer === "string" ? subscription.customer : null;
     const clerkUserId = (subscription.metadata as Record<string, string>)?.clerkUserId;
 
-    if (clerkUserId) {
+    // Prefer customer_id lookup (reliable), fall back to metadata
+    if (customerId) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("clerk_user_id")
+        .eq("stripe_customer_id", customerId)
+        .maybeSingle();
+
+      if (profile) {
+        await supabase
+          .from("profiles")
+          .update({ plan: "free" })
+          .eq("stripe_customer_id", customerId);
+        console.log("[Webhook] Downgraded customer", customerId, "to free");
+      }
+    } else if (clerkUserId) {
       await supabase
         .from("profiles")
         .update({ plan: "free" })

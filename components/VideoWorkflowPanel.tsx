@@ -507,6 +507,36 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
           perfect moment and position for natural product placement.
         </p>
 
+        {/* One-click demo banner */}
+        <div className="rounded-xl border border-emerald-700/50 bg-emerald-950/30 p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+          <div className="flex-1">
+            <p className="text-sm font-semibold text-emerald-300">🎯 Try a One-Click Demo</p>
+            <p className="text-xs text-emerald-400/70 mt-0.5">
+              Pre-loads a sample video + Red Bull product brief. Just hit the green button to watch the full AI pipeline run.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              // Reset to defaults
+              if (uploadedBlobUrlRef.current) { URL.revokeObjectURL(uploadedBlobUrlRef.current); uploadedBlobUrlRef.current = null; }
+              if (uploadedImageBlobUrlRef.current) { URL.revokeObjectURL(uploadedImageBlobUrlRef.current); uploadedImageBlobUrlRef.current = null; }
+              uploadedVideoFileRef.current = null;
+              setUploadedFileName("");
+              setUploadedImageName("");
+              setSampledFrames([]);
+              lastSampledUrl.current = "";
+              setError(null);
+              setResult(null);
+              setInput({ ...defaultInput });
+            }}
+            disabled={loading}
+            className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 transition"
+          >
+            Load Demo
+          </button>
+        </div>
+
         {/* VIDEO URL */}
         <div>
           <label className="block text-sm font-medium text-gray-300 mb-1">

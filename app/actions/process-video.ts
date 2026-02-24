@@ -559,6 +559,46 @@ async function generateVideoFromFrame(input: {
   }
 }
 
+/* ═══════ Persist fal.ai assets to Supabase Storage ═══════════════ */
+/*
+ * Fal.ai-generated URLs are temporary (TTL ~24h). We copy the assets
+ * to our own Supabase Storage bucket so they remain accessible forever.
+ */
+async function persistToStorage(
+  url: string,
+  userId: string,
+  suffix: string,
+): Promise<string | null> {
+  try {
+    const supabase = getSupabaseServiceRoleClient();
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`[Persist] Failed to fetch ${suffix}:`, res.status);
+      return null;
+    }
+    const buffer = Buffer.from(await res.arrayBuffer());
+    const contentType = res.headers.get("content-type") || "application/octet-stream";
+    const ext = contentType.includes("video") ? "mp4" : "jpg";
+    const path = `${userId}/${Date.now()}-${suffix}.${ext}`;
+
+    const { error } = await supabase.storage
+      .from("user-videos")
+      .upload(path, buffer, { contentType, upsert: false });
+
+    if (error) {
+      console.warn(`[Persist] Upload error for ${suffix}:`, error.message);
+      return null;
+    }
+
+    const { data } = supabase.storage.from("user-videos").getPublicUrl(path);
+    console.log(`[Persist] ✓ Saved ${suffix} → ${data.publicUrl.slice(0, 80)}`);
+    return data.publicUrl;
+  } catch (err) {
+    console.warn(`[Persist] Exception for ${suffix}:`, err);
+    return null;
+  }
+}
+
 /* ═══════════════════  Save to Supabase  ═══════════════════════════ */
 
 async function saveProcessedVideo(params: {
@@ -674,6 +714,15 @@ export async function processVideoAction(
     });
     pipelineSteps.push(compositedFrameUrl ? "ai-placement-done" : "ai-placement-failed");
 
+    // Persist inpainted frame to own storage (fal.ai URLs are temporary)
+    if (compositedFrameUrl) {
+      const persistedFrame = await persistToStorage(compositedFrameUrl, userId, "inpainted-frame");
+      if (persistedFrame) {
+        compositedFrameUrl = persistedFrame;
+        pipelineSteps.push("frame-persisted");
+      }
+    }
+
     /* ── Phase 5: VIDEO GENERATION ── */
     if (compositedFrameUrl) {
       const motionPrompt = directorDecision?.videoMotionPrompt ??
@@ -689,6 +738,15 @@ export async function processVideoAction(
         generatedVideoUrl = null;
       }
       pipelineSteps.push(generatedVideoUrl ? "video-generated" : "video-failed");
+
+      // Persist generated video to own storage (fal.ai URLs are temporary)
+      if (generatedVideoUrl) {
+        const persistedVideo = await persistToStorage(generatedVideoUrl, userId, "ai-clip");
+        if (persistedVideo) {
+          generatedVideoUrl = persistedVideo;
+          pipelineSteps.push("video-persisted");
+        }
+      }
     }
   }
 

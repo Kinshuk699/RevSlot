@@ -22,7 +22,7 @@ export function Watermark({ visible }: WatermarkProps) {
     >
       <div className="flex -rotate-12 flex-col items-center gap-3 select-none">
         <span className="text-5xl font-extrabold tracking-widest text-white/[0.12] sm:text-6xl">
-          VIBESLOT
+          REVSLOT
         </span>
         <span className="text-sm font-medium tracking-[0.25em] text-white/[0.10]">
           FREE PLAN • UPGRADE TO REMOVE

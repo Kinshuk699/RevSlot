@@ -18,8 +18,26 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VibeSlot",
-  description: "AI-Powered Visual Commerce",
+  title: "RevSlot — AI-Powered Visual Commerce",
+  description:
+    "Turn any video into a shoppable storefront. RevSlot\u2019s AI Director finds the perfect frame, seamlessly places your product, and generates a click-to-buy overlay — no editing skills needed.",
+  openGraph: {
+    title: "RevSlot — AI-Powered Visual Commerce",
+    description:
+      "Turn any video into a shoppable storefront with generative AI product placement.",
+    url: "https://revslot.onrender.com",
+    siteName: "RevSlot",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "RevSlot — AI-Powered Visual Commerce",
+    description:
+      "Turn any video into a shoppable storefront with generative AI product placement.",
+  },
+  icons: {
+    icon: "/favicon.ico",
+  },
 };
 
 export default async function RootLayout({

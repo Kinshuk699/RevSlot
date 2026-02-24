@@ -2,16 +2,38 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase";
 
+/* ─── Simple in-memory rate limiter ─── */
+const RATE_WINDOW_MS = 60_000; // 1 minute
+const MAX_UPLOADS_PER_WINDOW = 5;
+const uploadLog = new Map<string, number[]>();
+
+function isRateLimited(userId: string): boolean {
+  const now = Date.now();
+  const timestamps = (uploadLog.get(userId) ?? []).filter((t) => now - t < RATE_WINDOW_MS);
+  if (timestamps.length >= MAX_UPLOADS_PER_WINDOW) return true;
+  timestamps.push(now);
+  uploadLog.set(userId, timestamps);
+  return false;
+}
+
 /**
  * POST /api/upload
  * Accepts FormData with a "file" field (video/mp4).
  * Uploads to Supabase Storage and returns the public URL.
+ * Rate-limited to 5 uploads per minute per user.
  */
 export async function POST(req: NextRequest) {
   try {
     const { userId } = await auth();
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    if (isRateLimited(userId)) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded. Please wait a minute before uploading again." },
+        { status: 429 },
+      );
     }
 
     const formData = await req.formData();
