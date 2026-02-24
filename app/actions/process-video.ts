@@ -194,11 +194,13 @@ ${referenceVisualSpec ? `- Reference visual specification: ${referenceVisualSpec
 
 YOUR JOB: Pick the SINGLE BEST frame for natural product placement and create the full creative direction.
 
+HOW THE PIPELINE WORKS: An AI model (Gemini) will look at your chosen frame AND the actual product reference image, then REGENERATE the frame with the product seamlessly placed into it — matching lighting, shadows, perspective, and scale automatically. Think of it like a VFX artist adding the product in post-production.
+
 Think like a Hollywood ad executive:
 - Which frame has a natural surface, empty space, or logical place for this product?
 - Avoid frames where hands/faces/action would be obstructed
 - Prefer moments with stable composition (less motion blur)
-- Consider lighting direction — the product needs to match it
+- Consider what surface the product will sit on — tables, counters, desks, shelves are ideal
 - The product should feel like it was ALWAYS in the scene during filming
 
 Return a JSON object with EXACTLY these fields:
@@ -208,17 +210,17 @@ Return a JSON object with EXACTLY these fields:
   "maskRegion": { "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0 },
   "sceneDescription": "What is happening in this video — environment, objects, surfaces, lighting, mood. 2-3 sentences.",
   "placementRationale": "WHY you chose this exact frame and position. What surface does it sit on? How does the lighting work? 2-3 sentences.",
-  "inpaintingPrompt": "Detailed prompt for AI image inpainting. Describe EXACTLY how the product appears: orientation, lighting angle, shadows, reflections, color temperature, relationship to nearby objects. Reference specific scene elements. 50-150 words.",
-  "videoMotionPrompt": "Prompt for image-to-video AI. Describe subtle motion: camera sway matching original footage, how light plays on the product, ambient motion around it. Keep the product stable and grounded. 30-80 words.",
-  "negativePrompt": "Comma-separated list of things to AVOID, specific to this scene: wrong lighting, floating, wrong scale, etc."
+  "inpaintingPrompt": "Detailed instruction for an AI model that will place the product into the scene. Describe EXACTLY: where in the frame the product should appear, what surface it sits on, the lighting direction and color temperature, shadows it should cast, its orientation/angle, and how it relates to nearby objects. Be very specific about the location using references like 'on the wooden desk to the left of the laptop' or 'on the kitchen counter next to the spice rack'. 60-150 words.",
+  "videoMotionPrompt": "Prompt for image-to-video AI. Describe subtle ambient motion matching the original footage. The placed product MUST remain completely stationary, sharp, and clearly visible throughout — it is a real physical object in the scene. Any camera sway should be gentle. 30-80 words.",
+  "negativePrompt": "Comma-separated list of things to AVOID: wrong lighting, floating, wrong scale, product moving or morphing, product disappearing, blur on product, etc."
 }
 
 RULES FOR maskRegion (normalised 0-1 coordinates):
-- x,y = top-left corner of the placement box
-- w,h = width and height of the box
-- The box must be on a visible SURFACE (table, desk, floor, shelf, counter)
-- Size should be realistic for the product (not too large, not tiny)
-- Typical product placement: w=0.15-0.25, h=0.20-0.35
+- x,y = top-left corner of the approximate placement area
+- w,h = width and height of the area where the product should appear
+- The box should be on a visible SURFACE (table, desk, floor, shelf, counter)
+- Size should be realistic for the product at its apparent distance from camera
+- Typical product placement: w=0.08-0.20, h=0.10-0.30
 
 Return ONLY valid JSON. No markdown fences.`,
   });
@@ -289,6 +291,126 @@ async function analyzeReferenceProductImage(
   );
 
   return raw?.trim() || null;
+}
+
+/* ═══════ Phase 3 — Remove product background (BiRefNet) ═════════ */
+
+async function removeProductBackground(imageUrl: string): Promise<string | null> {
+  const falKey = process.env.FAL_KEY;
+  if (!falKey) {
+    console.warn("[BiRefNet] FAL_KEY missing — skipping background removal");
+    return null;
+  }
+
+  fal.config({ credentials: falKey });
+  console.log("[BiRefNet] Removing product background …");
+
+  try {
+    const result = await fal.run("fal-ai/birefnet", {
+      input: {
+        image_url: imageUrl,
+        model: "General Use (Light)",
+        output_format: "png",
+      },
+    });
+
+    const data = result.data as { image?: { url?: string } };
+    const url = data?.image?.url;
+    if (url) {
+      console.log("[BiRefNet] ✓ Background removed:", url.slice(0, 80));
+      return url;
+    }
+
+    console.warn("[BiRefNet] No image URL in response");
+    return null;
+  } catch (err) {
+    console.error("[BiRefNet] Error:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/* ═══════ Phase 4 — AI Product Placement (Gemini via Nano Banana) ═══ */
+/*
+ * Uses fal-ai/nano-banana-pro/edit — a Gemini 3 Pro-powered multi-reference
+ * image editor. We pass TWO images:
+ *   Image 1: The video frame (the scene)
+ *   Image 2: The product cutout (background removed)
+ * + a detailed text prompt telling Gemini exactly where and how to place the
+ *   product into the scene. Gemini understands depth, lighting, perspective,
+ *   and generates the product as if it was always part of the scene.
+ */
+async function placeProductInScene(input: {
+  frameDataUrl: string;
+  productCutoutUrl: string;
+  placementPrompt: string;
+  productDescription: string;
+  referenceVisualSpec?: string | null;
+}): Promise<string | null> {
+  const falKey = process.env.FAL_KEY;
+  if (!falKey) {
+    console.warn("[Placement] FAL_KEY missing");
+    return null;
+  }
+
+  fal.config({ credentials: falKey });
+
+  // Build the placement instruction
+  const visualRef = input.referenceVisualSpec
+    ? `\nThe product looks exactly like this: ${input.referenceVisualSpec}`
+    : "";
+
+  const prompt = `You are a professional VFX compositor. Your job is to seamlessly add a product into a scene.
+
+Image 1 is the original scene (a video frame).
+Image 2 is the product to place (with transparent background).
+
+INSTRUCTION: Place the product from Image 2 naturally into the scene from Image 1.
+${input.placementPrompt}
+${visualRef}
+
+CRITICAL RULES:
+- The product MUST look like it was physically present when the scene was filmed
+- Match the scene's exact lighting direction, color temperature, and ambient light
+- Add realistic shadows beneath/behind the product matching the scene's light source
+- The product's perspective and scale must match the scene's depth and camera angle
+- Preserve the product's branding, logos, text, and colors EXACTLY — do not alter them
+- The rest of the scene must remain COMPLETELY UNCHANGED — same background, same objects, same people
+- The result should look like a professional photograph, not a photoshop job`;
+
+  console.log("[Placement] Generating product placement with Gemini (nano-banana-pro) …");
+  console.log("[Placement] Prompt:", prompt.slice(0, 200));
+
+  try {
+    const result = await fal.subscribe("fal-ai/nano-banana-pro/edit", {
+      input: {
+        prompt,
+        image_urls: [input.frameDataUrl, input.productCutoutUrl],
+        num_images: 1,
+        resolution: "1K",
+        output_format: "jpeg",
+      },
+      pollInterval: 3000,
+      timeout: 180_000, // 3 minute timeout
+      onQueueUpdate: (update) => {
+        console.log(`[Placement] Queue: ${update.status}`);
+      },
+    });
+
+    // nano-banana-pro returns { images: [{ url, ... }] }
+    const data = result.data as { images?: Array<{ url?: string }> };
+    const url = data?.images?.[0]?.url;
+    if (url) {
+      console.log("[Placement] ✓ Product placed in scene:", url.slice(0, 100));
+      return url;
+    }
+
+    console.warn("[Placement] No image URL in response:", JSON.stringify(data).slice(0, 300));
+    return null;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Placement] Error:", msg);
+    return null;
+  }
 }
 
 /* ═══════ Fallback — LLaVA frame analysis (when OpenAI unavailable) */
@@ -556,12 +678,14 @@ async function saveProcessedVideo(params: {
 
 /* ═══════════════  Main server action  ═════════════════════════════ */
 /*
- * NEW PIPELINE — Director decides everything:
+ * PIPELINE — Director + Gemini-powered Product Placement:
  *   Phase 1+2 → GPT-4o Vision analyses all frames, picks best moment,
- *               decides mask region, writes creative direction
- *   Phase 3   → Get/generate product image
- *   Phase 4   → SDXL inpaints with Director's prompt at Director's chosen frame
- *   Phase 5   → Kling animates with Director's motion script
+ *               decides placement region, writes creative direction
+ *   Phase 3   → BiRefNet removes product image background → transparent cutout
+ *   Phase 4   → Gemini (nano-banana-pro/edit) sees the scene + product cutout
+ *               and GENERATES the product seamlessly into the scene with correct
+ *               lighting, shadows, perspective — like real VFX
+ *   Phase 5   → Kling animates the composited frame into video
  *   Phase 6   → Splice into original
  */
 export async function processVideoAction(
@@ -627,30 +751,50 @@ export async function processVideoAction(
   const maskRegion = directorDecision?.maskRegion ?? { x: 0.35, y: 0.2, w: 0.3, h: 0.5 };
 
   if (chosenFrame) {
-    /* ── Phase 4: COMPOSITE + HARMONIZE ── */
-    // Generate mask from Director's chosen region
-    const maskDataUrl = generateMaskPng(chosenFrame.width, chosenFrame.height, maskRegion);
+    /* ── Phase 3: REMOVE PRODUCT BACKGROUND (BiRefNet) ── */
+    const productCutoutUrl = await removeProductBackground(input.productImageUrl);
+    pipelineSteps.push(productCutoutUrl ? "bg-removed" : "bg-removal-failed");
 
-    // Build inpainting prompt (Director's or fallback)
-    const inpaintingPrompt = directorDecision?.inpaintingPrompt ??
-      buildFallbackInpaintingPrompt(fallbackDesc, brand, input.productDescription);
-    const fidelityPrompt = referenceVisualSpec
-      ? `${inpaintingPrompt}\n\nMANDATORY VISUAL FIDELITY: match this exact reference product appearance — ${referenceVisualSpec}`
-      : inpaintingPrompt;
-    const negativePrompt = directorDecision?.negativePrompt ??
-      "blurry, distorted, watermark, cartoon, low quality, floating, wrong perspective";
+    /* ── Phase 4: AI PRODUCT PLACEMENT (Gemini via nano-banana-pro) ── */
+    const productImgForPlacement = productCutoutUrl || input.productImageUrl;
 
-    compositedFrameUrl = await compositeAndHarmonize({
+    // Build the placement prompt from Director's analysis or fallback
+    const placementPrompt = directorDecision?.inpaintingPrompt ??
+      `Place the ${input.productDescription} naturally on a visible surface in this scene. ` +
+      `It should look like it was always there — match lighting, shadows, perspective, and scale.`;
+
+    compositedFrameUrl = await placeProductInScene({
       frameDataUrl: chosenFrame.dataUrl,
-      maskDataUrl,
-      creativeDirection: { inpaintingPrompt: fidelityPrompt, negativePrompt },
+      productCutoutUrl: productImgForPlacement,
+      placementPrompt,
+      productDescription: input.productDescription,
+      referenceVisualSpec: referenceVisualSpec,
     });
-    pipelineSteps.push(compositedFrameUrl ? "composite-done" : "composite-failed");
+    pipelineSteps.push(compositedFrameUrl ? "placement-done" : "placement-failed");
+
+    // Fallback: SDXL inpainting if Gemini placement failed
+    if (!compositedFrameUrl) {
+      console.warn("[Pipeline] Gemini placement failed — falling back to SDXL inpainting");
+      const maskDataUrl = generateMaskPng(chosenFrame.width, chosenFrame.height, maskRegion);
+      const inpaintingPrompt = directorDecision?.inpaintingPrompt ??
+        buildFallbackInpaintingPrompt(fallbackDesc, brand, input.productDescription);
+      const fidelityPrompt = referenceVisualSpec
+        ? `${inpaintingPrompt}\n\nMANDATORY VISUAL FIDELITY: match this exact reference product appearance — ${referenceVisualSpec}`
+        : inpaintingPrompt;
+      const negativePrompt = directorDecision?.negativePrompt ??
+        "blurry, distorted, watermark, cartoon, low quality, floating, wrong perspective";
+      compositedFrameUrl = await compositeAndHarmonize({
+        frameDataUrl: chosenFrame.dataUrl,
+        maskDataUrl,
+        creativeDirection: { inpaintingPrompt: fidelityPrompt, negativePrompt },
+      });
+      pipelineSteps.push(compositedFrameUrl ? "composite-fallback-done" : "composite-fallback-failed");
+    }
 
     /* ── Phase 5: VIDEO GENERATION ── */
     if (compositedFrameUrl) {
       const motionPrompt = directorDecision?.videoMotionPrompt ??
-        `Smooth cinematic shot featuring ${input.productDescription}, subtle camera motion, photorealistic, ambient lighting.`;
+        `Smooth cinematic shot. The ${input.productDescription} sits stationary and clearly visible on a surface in the scene. Subtle ambient motion around it — gentle camera drift, natural lighting shifts. The product MUST remain sharp, stable, and unmoved throughout. Photorealistic, commercial quality.`;
 
       try {
         generatedVideoUrl = await generateVideoFromFrame({

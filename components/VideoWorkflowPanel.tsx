@@ -25,7 +25,7 @@ type FrameSample = {
 
 /* ═══════════════════════════  Config  ══════════════════════════════ */
 
-const NUM_SAMPLES = 6; // frames to sample for Director
+const NUM_SAMPLES = 12; // frames to sample for Director — more = better coverage
 const MAX_VIDEO_SECONDS = 30;
 
 const defaultInput: FormInput = {
