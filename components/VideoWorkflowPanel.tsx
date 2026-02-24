@@ -700,6 +700,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       {/* ── LIVE LOG PANEL ── */}
       {(loading || liveLogs.length > 0) && (() => {
         const FRIENDLY_MESSAGES = [
+          "I promise we'll get you your video before the song ends",
           "Cooking something up for you …",
           "Director is analyzing your video frame by frame …",
           "Finding the perfect moment for product placement …",
@@ -716,7 +717,10 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
           "Fine-tuning the placement for perfection …",
           "Wrapping up — your video is nearly ready …",
         ];
-        const currentMsg = FRIENDLY_MESSAGES[friendlyStep % FRIENDLY_MESSAGES.length];
+        // Show the first message for 20s, then cycle through the rest
+        const currentMsg = elapsedSec >= 580
+          ? FRIENDLY_MESSAGES[0]
+          : FRIENDLY_MESSAGES[1 + (friendlyStep % (FRIENDLY_MESSAGES.length - 1))];
         const minutes = Math.floor(elapsedSec / 60);
         const seconds = elapsedSec % 60;
 
