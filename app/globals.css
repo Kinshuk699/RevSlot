@@ -1,19 +1,33 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
 
 :root {
-  --background: #09090b;
-  --foreground: #f4f4f5;
+  --background: #fffeec;
+  --foreground: #000000;
+  --text-secondary: #1a1a1a;
+  --accent: #36A64F;
+  --accent-light: rgba(54, 166, 79, 0.1);
+  --accent-coral: #FF6363;
+  --accent-coral-light: rgba(255, 99, 99, 0.1);
+  --card-border: rgba(0, 0, 0, 0.1);
+  --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-display: 'Space Grotesk', sans-serif;
+  --font-mono: 'Space Mono', monospace;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-primary);
+  --font-mono: var(--font-mono);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  font-family: var(--font-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }

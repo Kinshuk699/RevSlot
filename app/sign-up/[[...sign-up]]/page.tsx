@@ -11,11 +11,11 @@ export default async function SignUpPage() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-zinc-950 px-6 py-12">
+    <main className="flex min-h-screen items-center justify-center bg-[#fffeec] px-6 py-12">
       <div className="flex w-full max-w-md flex-col items-center gap-4">
-        <p className="text-center text-sm text-zinc-400">
+        <p className="text-center text-sm text-black/50">
           Already have an account?{" "}
-          <Link href="/sign-in" className="font-semibold text-zinc-100 underline-offset-4 hover:underline">
+          <Link href="/sign-in" className="font-semibold text-black underline-offset-4 hover:underline">
             Sign in
           </Link>
           .

@@ -5,6 +5,9 @@ import { toast } from "sonner";
 import { useAuth } from "@clerk/nextjs";
 import { Check, Loader2, Sparkles, Zap } from "lucide-react";
 
+/* ─── Plan hierarchy (higher = better) ─── */
+const PLAN_RANK: Record<string, number> = { free: 0, creator: 1, studio: 2 };
+
 type PricingCardProps = {
   name: string;
   price: string;
@@ -27,7 +30,10 @@ export function PricingCard({
   const { isSignedIn } = useAuth();
   const [loading, setLoading] = useState(false);
 
+  const cardRank = PLAN_RANK[name.toLowerCase()] ?? 0;
+  const userRank = currentPlan ? (PLAN_RANK[currentPlan.toLowerCase()] ?? 0) : -1;
   const isCurrent = currentPlan?.toLowerCase() === name.toLowerCase();
+  const isBelow = currentPlan != null && cardRank < userRank; // plan is lower than user's
 
   async function handleCheckout() {
     if (!isSignedIn) {
@@ -64,27 +70,27 @@ export function PricingCard({
     <article
       className={`relative flex flex-col rounded-2xl border p-6 transition-all ${
         highlighted
-          ? "border-emerald-500/50 bg-zinc-900 shadow-lg shadow-emerald-500/5"
-          : "border-zinc-800 bg-zinc-900/60"
+          ? "border-[#36A64F]/40 bg-white shadow-lg shadow-[#36A64F]/5"
+          : "border-black/10 bg-white/50"
       }`}
     >
       {highlighted && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-emerald-500 px-3 py-0.5 text-xs font-bold text-black">
+        <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-[#36A64F] px-3 py-0.5 font-['Space_Mono'] text-xs font-bold uppercase tracking-wider text-white">
           POPULAR
         </span>
       )}
 
       <div className="flex items-center gap-2">
         {icon}
-        <h2 className="text-xl font-semibold text-zinc-100">{name}</h2>
+        <h2 className="font-['Space_Grotesk'] text-xl font-semibold text-black">{name}</h2>
       </div>
 
-      <p className="mt-3 text-3xl font-bold text-zinc-100">{price}</p>
+      <p className="mt-3 font-['Space_Grotesk'] text-3xl font-bold text-black">{price}</p>
 
       <ul className="mt-5 flex-1 space-y-2.5">
         {features.map((f) => (
-          <li key={f} className="flex items-start gap-2 text-sm text-zinc-300">
-            <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+          <li key={f} className="flex items-start gap-2 text-sm text-black/70">
+            <Check className="mt-0.5 h-4 w-4 shrink-0 text-[#36A64F]" />
             {f}
           </li>
         ))}
@@ -92,18 +98,20 @@ export function PricingCard({
 
       <button
         type="button"
-        disabled={loading || isCurrent}
+        disabled={loading || isCurrent || isBelow}
         onClick={handleCheckout}
-        className={`mt-6 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold transition ${
+        className={`mt-6 flex w-full items-center justify-center gap-2 rounded-lg px-4 py-2.5 font-['Space_Mono'] text-xs font-bold uppercase tracking-wider transition ${
           isCurrent
-            ? "cursor-default border border-zinc-700 text-zinc-500"
-            : highlighted
-              ? "bg-emerald-500 text-black hover:bg-emerald-400"
-              : "bg-zinc-100 text-zinc-900 hover:bg-white"
+            ? "cursor-default border-2 border-[#36A64F]/40 bg-[#36A64F]/5 text-[#36A64F]"
+            : isBelow
+              ? "cursor-default border border-black/5 bg-black/[0.02] text-black/25"
+              : highlighted
+                ? "bg-[#36A64F] text-white hover:bg-[#36A64F]/90"
+                : "bg-black text-white hover:bg-black/80"
         }`}
       >
         {loading && <Loader2 className="h-4 w-4 animate-spin" />}
-        {isCurrent ? "Current Plan" : priceId ? "Upgrade" : "Get Started"}
+        {isCurrent ? "✓ Current Plan" : isBelow ? "Included" : priceId ? "Upgrade" : "Get Started"}
       </button>
     </article>
   );
@@ -129,7 +137,7 @@ export function PricingGrid({ currentPlan }: { currentPlan?: string }) {
         features={["10 Videos", "No Watermark", "Priority Support"]}
         priceId={creatorPriceId}
         highlighted
-        icon={<Sparkles className="h-5 w-5 text-emerald-400" />}
+        icon={<Sparkles className="h-5 w-5 text-[#36A64F]" />}
         currentPlan={currentPlan}
       />
       <PricingCard
@@ -137,7 +145,7 @@ export function PricingGrid({ currentPlan }: { currentPlan?: string }) {
         price="$100/mo"
         features={["50 Videos", "No Watermark", "Priority AI", "Dedicated Support"]}
         priceId={studioPriceId}
-        icon={<Zap className="h-5 w-5 text-amber-400" />}
+        icon={<Zap className="h-5 w-5 text-[#FF6363]" />}
         currentPlan={currentPlan}
       />
     </section>

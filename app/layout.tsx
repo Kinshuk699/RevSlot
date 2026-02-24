@@ -1,21 +1,10 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
 import { auth } from "@clerk/nextjs/server";
-import { Geist, Geist_Mono } from "next/font/google";
 import { Toaster } from "sonner";
 import { syncUserProfile } from "@/app/actions/sync-user";
 import { AuthNav } from "@/components/AuthNav";
 import "./globals.css";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "RevSlot — AI-Powered Visual Commerce",
@@ -57,8 +46,8 @@ export default async function RootLayout({
   }
 
   return (
-    <html lang="en" className="dark">
-      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>
+    <html lang="en">
+      <body className="antialiased">
         {publishableKey ? (
           <ClerkProvider
             publishableKey={publishableKey}

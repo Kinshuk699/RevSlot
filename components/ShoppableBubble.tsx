@@ -36,8 +36,8 @@ export function ShoppableBubble({
           <div className="flex items-center gap-3 rounded-full border border-zinc-600/60 bg-black/80 py-2 pl-4 pr-2 shadow-2xl backdrop-blur-md">
             {/* Small emerald dot indicator */}
             <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#36A64F] opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-[#36A64F]" />
             </span>
 
             <span className="max-w-[200px] truncate text-sm font-medium text-zinc-100">
@@ -48,7 +48,7 @@ export function ShoppableBubble({
               href={buyUrl}
               target="_blank"
               rel="noreferrer"
-              className="rounded-full bg-emerald-500 px-4 py-1.5 text-xs font-bold text-black hover:bg-emerald-400 transition-colors"
+              className="rounded-full bg-[#36A64F] px-4 py-1.5 text-xs font-bold text-black hover:bg-[#36A64F]/80 transition-colors"
             >
               Shop
             </a>

@@ -498,20 +498,20 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
   return (
     <div className="space-y-8 max-w-3xl mx-auto">
       {/* ── FORM ── */}
-      <div className="bg-gray-900 rounded-2xl p-6 space-y-5 border border-gray-800">
-        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+      <div className="bg-white/60 rounded-2xl p-6 space-y-5 border border-black/10">
+        <h2 className="text-xl font-['Space_Grotesk'] font-semibold text-black flex items-center gap-2">
           🎬 AI Director Pipeline
         </h2>
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-black/50">
           Enter your video and product details — the AI Director will decide the
           perfect moment and position for natural product placement.
         </p>
 
         {/* One-click demo banner */}
-        <div className="rounded-xl border border-emerald-700/50 bg-emerald-950/30 p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="rounded-xl border border-[#36A64F]/30 bg-[#36A64F]/5 p-4 flex flex-col sm:flex-row items-start sm:items-center gap-3">
           <div className="flex-1">
-            <p className="text-sm font-semibold text-emerald-300">🎯 Try a One-Click Demo</p>
-            <p className="text-xs text-emerald-400/70 mt-0.5">
+            <p className="text-sm font-semibold text-[#36A64F]">🎯 Try a One-Click Demo</p>
+            <p className="text-xs text-[#36A64F]/60 mt-0.5">
               Pre-loads a sample video + Red Bull product brief. Just hit the green button to watch the full AI pipeline run.
             </p>
           </div>
@@ -531,7 +531,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
               setInput({ ...defaultInput });
             }}
             disabled={loading}
-            className="shrink-0 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white hover:bg-emerald-500 disabled:opacity-40 transition"
+            className="shrink-0 rounded-lg bg-[#36A64F] px-4 py-2 font-['Space_Mono'] text-xs font-bold uppercase tracking-wider text-white hover:bg-[#36A64F]/90 disabled:opacity-40 transition"
           >
             Load Demo
           </button>
@@ -539,7 +539,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
 
         {/* VIDEO URL */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-1">
+          <label className="block text-sm font-medium text-black/70 mb-1">
             Video URL
           </label>
           <input
@@ -547,25 +547,25 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
             value={isUpload ? "" : input.sourceVideoUrl}
             onChange={setSourceVideoUrl}
             disabled={isUpload}
-            className={`w-full rounded-lg bg-gray-800 border border-gray-700 px-4 py-2.5 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition ${
+            className={`w-full rounded-lg bg-white border border-black/10 px-4 py-2.5 text-black placeholder-black/30 focus:border-[#36A64F] focus:ring-1 focus:ring-[#36A64F] transition ${
               isUpload ? "opacity-40 cursor-not-allowed" : ""
             }`}
             placeholder={isUpload ? "Upload active — remove file to use a URL" : "https://example.com/video.mp4 (max 30s)"}
           />
-          <p className="text-xs text-gray-500 mt-1">
-            Supports direct public <span className="text-gray-300">.mp4</span> URLs only (max {MAX_VIDEO_SECONDS}s). YouTube links are not supported yet.
+          <p className="text-xs text-black/40 mt-1">
+            Supports direct public <span className="text-black/60">.mp4</span> URLs only (max {MAX_VIDEO_SECONDS}s). YouTube links are not supported yet.
           </p>
 
-          <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
-            <div className="flex-1 border-t border-gray-800" />
+          <div className="mt-3 flex items-center gap-3 text-xs text-black/30">
+            <div className="flex-1 border-t border-black/10" />
             <span>OR</span>
-            <div className="flex-1 border-t border-gray-800" />
+            <div className="flex-1 border-t border-black/10" />
           </div>
 
-          <div className={`mt-3 rounded-lg border border-gray-800 bg-gray-900/70 p-3 ${
+          <div className={`mt-3 rounded-lg border border-black/10 bg-white/50 p-3 ${
             hasTypedUrl ? "opacity-40 pointer-events-none" : ""
           }`}>
-            <label className="block text-xs font-medium text-gray-300 mb-2">
+            <label className="block text-xs font-medium text-black/60 mb-2">
               Upload .mp4 file (max {MAX_VIDEO_SECONDS}s)
             </label>
 
@@ -575,11 +575,11 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
                 accept="video/mp4,.mp4"
                 onChange={handleMp4Upload}
                 disabled={hasTypedUrl}
-                className="block w-full text-xs text-gray-300 file:mr-3 file:rounded-md file:border-0 file:bg-gray-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-gray-600"
+                className="block w-full text-xs text-black/60 file:mr-3 file:rounded-md file:border-0 file:bg-black/10 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-black hover:file:bg-black/20"
               />
             ) : (
               <div className="flex items-center gap-3">
-                <span className="text-xs text-green-400">✅ {uploadedFileName}</span>
+                <span className="text-xs text-[#36A64F]">✅ {uploadedFileName}</span>
                 <button
                   type="button"
                   onClick={clearUpload}
@@ -592,37 +592,37 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
           </div>
 
           {isSampling && (
-            <p className="text-xs text-blue-400 mt-1 animate-pulse">
+            <p className="text-xs text-[#36A64F]/70 mt-1 animate-pulse">
               Sampling frames from video …
             </p>
           )}
           {sampledFrames.length > 0 && !isSampling && (
-            <p className="text-xs text-green-400 mt-1">
+            <p className="text-xs text-[#36A64F] mt-1">
               ✓ {sampledFrames.length} frames ready for AI Director
             </p>
           )}
         </div>
 
         {/* PRODUCT BRIEF — the one field that matters */}
-        <div className="bg-blue-950/40 rounded-xl p-4 border border-blue-800/50">
-          <label className="block text-sm font-semibold text-blue-300 mb-1">
+        <div className="bg-[#36A64F]/5 rounded-xl p-4 border border-[#36A64F]/20">
+          <label className="block text-sm font-semibold text-[#36A64F] mb-1">
             Product Brief *
           </label>
           <textarea
             value={input.productDescription}
             onChange={set("productDescription")}
             rows={4}
-            className="w-full rounded-lg bg-gray-800 border border-blue-700/50 px-4 py-2.5 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition resize-none"
+            className="w-full rounded-lg bg-white border border-[#36A64F]/20 px-4 py-2.5 text-black placeholder-black/30 focus:border-[#36A64F] focus:ring-1 focus:ring-[#36A64F] transition resize-none"
             placeholder={"Tell the AI Director everything:\n• Brand & product name (e.g. \"Red Bull Energy Drink\")\n• What it looks like (e.g. \"slim 250ml blue & silver aluminium can\")\n• Where it belongs (e.g. \"on a desk, kitchen counter, café table\")\n• The vibe (e.g. \"youthful, high-energy, adventurous\")"}
           />
-          <p className="text-xs text-blue-400/70 mt-1">
+          <p className="text-xs text-[#36A64F]/50 mt-1">
             This is ALL the AI Director reads. The more you tell it — brand, appearance, mood, where it fits — the more natural the placement.
           </p>
         </div>
 
         {/* REFERENCE IMAGE — mandatory for exact visual fidelity */}
-        <div className="bg-purple-950/30 rounded-xl p-4 border border-purple-800/50">
-          <label className="block text-sm font-semibold text-purple-300 mb-1">
+        <div className="bg-[#FF6363]/5 rounded-xl p-4 border border-[#FF6363]/20">
+          <label className="block text-sm font-semibold text-[#FF6363] mb-1">
             Reference Product Image *
           </label>
           <input
@@ -630,25 +630,25 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
             value={isImageUpload ? "" : input.productImageUrl}
             onChange={setProductImageUrl}
             disabled={isImageUpload}
-            className={`w-full rounded-lg bg-gray-800 border border-purple-700/50 px-4 py-2.5 text-white placeholder-gray-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition text-sm ${
+            className={`w-full rounded-lg bg-white border border-[#FF6363]/20 px-4 py-2.5 text-black placeholder-black/30 focus:border-[#FF6363] focus:ring-1 focus:ring-[#FF6363] transition text-sm ${
               isImageUpload ? "opacity-40 cursor-not-allowed" : ""
             }`}
             placeholder={isImageUpload ? "Upload active — remove file to use a URL" : "https://example.com/product.jpg"}
           />
-          <p className="text-xs text-purple-300/80 mt-1">
+          <p className="text-xs text-[#FF6363]/50 mt-1">
             For exact visual fidelity, a reference product image is still best (used for generation, not as an overlay).
           </p>
 
-          <div className="mt-3 flex items-center gap-3 text-xs text-purple-400/60">
-            <div className="flex-1 border-t border-purple-800/40" />
+          <div className="mt-3 flex items-center gap-3 text-xs text-[#FF6363]/30">
+            <div className="flex-1 border-t border-[#FF6363]/15" />
             <span>OR</span>
-            <div className="flex-1 border-t border-purple-800/40" />
+            <div className="flex-1 border-t border-[#FF6363]/15" />
           </div>
 
-          <div className={`mt-3 rounded-lg border border-purple-800/30 bg-purple-950/20 p-3 ${
+          <div className={`mt-3 rounded-lg border border-[#FF6363]/15 bg-white/50 p-3 ${
             hasTypedImageUrl ? "opacity-40 pointer-events-none" : ""
           }`}>
-            <label className="block text-xs font-medium text-purple-300/80 mb-2">
+            <label className="block text-xs font-medium text-[#FF6363]/60 mb-2">
               Upload image file
             </label>
 
@@ -658,11 +658,11 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
                 accept="image/png,image/jpeg,image/webp,image/avif,.png,.jpg,.jpeg,.webp,.avif"
                 onChange={handleImageUpload}
                 disabled={hasTypedImageUrl}
-                className="block w-full text-xs text-gray-300 file:mr-3 file:rounded-md file:border-0 file:bg-purple-900/60 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-purple-200 hover:file:bg-purple-800/60"
+                className="block w-full text-xs text-black/60 file:mr-3 file:rounded-md file:border-0 file:bg-[#FF6363]/10 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-[#FF6363] hover:file:bg-[#FF6363]/20"
               />
             ) : (
               <div className="flex items-center gap-3">
-                <span className="text-xs text-green-400">✅ {uploadedImageName}</span>
+                <span className="text-xs text-[#36A64F]">✅ {uploadedImageName}</span>
                 <button
                   type="button"
                   onClick={clearImageUpload}
@@ -677,14 +677,14 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
 
         {/* BUY LINK — the only extra field (it's the shop URL for the CTA bar) */}
         <div>
-          <label className="block text-sm font-medium text-gray-400 mb-1">
-            Buy Link <span className="text-gray-600">(optional — shown on the Shop button)</span>
+          <label className="block text-sm font-medium text-black/50 mb-1">
+            Buy Link <span className="text-black/30">(optional — shown on the Shop button)</span>
           </label>
           <input
             type="text"
             value={input.buyUrl}
             onChange={set("buyUrl")}
-            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-4 py-2.5 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition text-sm"
+            className="w-full rounded-lg bg-white border border-black/10 px-4 py-2.5 text-black placeholder-black/30 focus:border-[#36A64F] focus:ring-1 focus:ring-[#36A64F] transition text-sm"
             placeholder="https://store.example.com/product"
           />
         </div>
@@ -692,7 +692,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
         {/* SAMPLED FRAMES preview */}
         {sampledFrames.length > 0 && (
           <div>
-            <p className="text-xs text-gray-500 mb-2">
+            <p className="text-xs text-black/40 mb-2">
               Frames sampled for AI Director — it will choose the best one:
             </p>
             <div className="flex gap-2 overflow-x-auto pb-2">
@@ -702,9 +702,9 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
                   <img
                     src={f.dataUrl}
                     alt={`Frame ${i + 1}`}
-                    className="h-16 rounded-md border border-gray-700 object-cover"
+                    className="h-16 rounded-md border border-black/10 object-cover"
                   />
-                  <span className="absolute bottom-0 left-0 text-[10px] bg-black/70 text-gray-300 px-1 rounded-tr">
+                  <span className="absolute bottom-0 left-0 text-[10px] bg-black/70 text-white px-1 rounded-tr">
                     {f.timestamp.toFixed(1)}s
                   </span>
                 </div>
@@ -722,7 +722,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
             !input.productDescription?.trim() ||
             !input.productImageUrl?.trim()
           }
-          className="w-full py-3 rounded-xl font-semibold text-white bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+          className="w-full py-3 rounded-xl font-['Space_Mono'] text-sm font-bold uppercase tracking-wider text-white bg-[#36A64F] hover:bg-[#36A64F]/90 disabled:opacity-40 disabled:cursor-not-allowed transition"
         >
           {loading ? "🎬 AI Director is working …" : "🚀 Let AI Director Place Product"}
         </button>
@@ -730,46 +730,46 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
 
       {/* ── LIVE LOG PANEL ── */}
       {(loading || liveLogs.length > 0) && (
-        <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800 space-y-3">
+        <div className="bg-white/60 rounded-2xl p-5 border border-black/10 space-y-3">
           {/* Header with status + elapsed time */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               {loading && (
                 <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#36A64F] opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#36A64F]" />
                 </span>
               )}
-              <p className="text-sm text-gray-300">{progressMsg}</p>
+              <p className="text-sm text-black/70">{progressMsg}</p>
             </div>
-            <span className="text-sm font-mono text-blue-400 tabular-nums">
+            <span className="text-sm font-['Space_Mono'] text-[#36A64F] tabular-nums">
               {Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")}
             </span>
           </div>
 
           {/* Indeterminate progress bar while loading */}
           {loading && (
-            <div className="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
-              <div className="bg-linear-to-r from-blue-500 via-purple-500 to-blue-500 h-1.5 rounded-full animate-pulse" style={{ width: "100%" }} />
+            <div className="w-full bg-black/10 rounded-full h-1.5 overflow-hidden">
+              <div className="bg-[#36A64F] h-1.5 rounded-full animate-pulse" style={{ width: "100%" }} />
             </div>
           )}
 
           {/* Scrollable log list */}
-          <div className="max-h-48 overflow-y-auto rounded-lg bg-black/40 border border-gray-800 p-3 font-mono text-xs space-y-0.5">
+          <div className="max-h-48 overflow-y-auto rounded-lg bg-black/5 border border-black/10 p-3 font-['Space_Mono'] text-xs space-y-0.5">
             {liveLogs.length === 0 && loading && (
-              <p className="text-gray-600 italic">Waiting for logs …</p>
+              <p className="text-black/30 italic">Waiting for logs …</p>
             )}
             {liveLogs.map((line, i) => (
               <p
                 key={i}
                 className={
                   line.includes("✗") || line.includes("ERROR")
-                    ? "text-red-400"
+                    ? "text-[#FF6363]"
                     : line.includes("✓") || line.includes("🎉")
-                    ? "text-green-400"
+                    ? "text-[#36A64F]"
                     : line.includes("⚠")
-                    ? "text-yellow-400"
-                    : "text-gray-400"
+                    ? "text-amber-600"
+                    : "text-black/50"
                 }
               >
                 {line}
@@ -782,8 +782,8 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
 
       {/* ── ERROR ── */}
       {error && (
-        <div className="bg-red-900/30 border border-red-800 rounded-xl p-4">
-          <p className="text-red-300 text-sm">{error}</p>
+        <div className="bg-[#FF6363]/10 border border-[#FF6363]/30 rounded-xl p-4">
+          <p className="text-[#FF6363] text-sm">{error}</p>
         </div>
       )}
 
@@ -792,25 +792,25 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
         <div className="space-y-6">
           {/* Director's Decision */}
           {result.directorDecision && (
-            <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800 space-y-3">
-              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+            <div className="bg-white/60 rounded-2xl p-6 border border-black/10 space-y-3">
+              <h3 className="text-lg font-['Space_Grotesk'] font-semibold text-black flex items-center gap-2">
                 🎯 AI Director&apos;s Decision
               </h3>
 
               <div className="space-y-2 text-sm">
                 <div>
-                  <span className="text-gray-400">Scene: </span>
-                  <span className="text-gray-200">
+                  <span className="text-black/50">Scene: </span>
+                  <span className="text-black/80">
                     {result.directorDecision.sceneDescription}
                   </span>
                 </div>
                 <div>
-                  <span className="text-gray-400">Why this placement: </span>
-                  <span className="text-gray-200">
+                  <span className="text-black/50">Why this placement: </span>
+                  <span className="text-black/80">
                     {result.directorDecision.placementRationale}
                   </span>
                 </div>
-                <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+                <div className="flex flex-wrap gap-4 text-xs text-black/40 font-['Space_Mono']">
                   <span>
                     Frame: #{result.directorDecision.chosenFrameIndex + 1} at{" "}
                     {result.directorDecision.chosenTimestamp.toFixed(1)}s
@@ -840,16 +840,16 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
           )}
 
           {/* Pipeline info */}
-          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
-            <p className="text-xs text-gray-500 mb-2">Pipeline steps</p>
+          <div className="bg-white/60 rounded-xl p-4 border border-black/10">
+            <p className="text-xs font-['Space_Mono'] uppercase tracking-wider text-black/40 mb-2">Pipeline steps</p>
             <div className="flex flex-wrap gap-2">
               {result.pipelineSteps.map((step, i) => (
                 <span
                   key={i}
                   className={`text-xs px-2.5 py-1 rounded-full ${
                     step.includes("fail")
-                      ? "bg-red-900/40 text-red-400"
-                      : "bg-green-900/40 text-green-400"
+                      ? "bg-[#FF6363]/10 text-[#FF6363]"
+                      : "bg-[#36A64F]/10 text-[#36A64F]"
                   }`}
                 >
                   {step}
@@ -857,10 +857,10 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
               ))}
             </div>
             {result.savedToSupabase && (
-              <p className="text-xs text-green-500 mt-2">✓ Saved to library</p>
+              <p className="text-xs text-[#36A64F] mt-2">✓ Saved to library</p>
             )}
             {result.saveError && (
-              <p className="text-xs text-red-400 mt-2">Save error: {result.saveError}</p>
+              <p className="text-xs text-[#FF6363] mt-2">Save error: {result.saveError}</p>
             )}
           </div>
         </div>
