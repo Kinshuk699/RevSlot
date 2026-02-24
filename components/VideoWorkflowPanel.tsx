@@ -158,8 +158,10 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
   const [uploadedImageName, setUploadedImageName] = useState("");
   const [liveLogs, setLiveLogs] = useState<string[]>([]);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [friendlyStep, setFriendlyStep] = useState(0);
   const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const friendlyRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
   const uploadedBlobUrlRef = useRef<string | null>(null);
   const uploadedImageBlobUrlRef = useRef<string | null>(null);
@@ -375,14 +377,22 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
     setError(null);
     setResult(null);
     setLiveLogs([]);
-    setElapsedSec(0);
+    setElapsedSec(600);
+    setFriendlyStep(0);
     setProgressMsg("Starting pipeline …");
 
-    // Start elapsed timer
+    // Start 10-minute countdown timer
     const startTime = Date.now();
     timerRef.current = setInterval(() => {
-      setElapsedSec(Math.floor((Date.now() - startTime) / 1000));
+      const elapsed = Math.floor((Date.now() - startTime) / 1000);
+      const remaining = Math.max(0, 600 - elapsed);
+      setElapsedSec(remaining);
     }, 1000);
+
+    // Rotate friendly messages every 12 seconds
+    friendlyRef.current = setInterval(() => {
+      setFriendlyStep((prev) => prev + 1);
+    }, 12000);
 
     addLog("Pipeline started");
 
@@ -488,6 +498,7 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
     } finally {
       if (progressRef.current) clearInterval(progressRef.current);
       if (timerRef.current) clearInterval(timerRef.current);
+      if (friendlyRef.current) clearInterval(friendlyRef.current);
       setLoading(false);
       addLog("Pipeline finished");
     }
@@ -729,56 +740,77 @@ export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
       </div>
 
       {/* ── LIVE LOG PANEL ── */}
-      {(loading || liveLogs.length > 0) && (
-        <div className="bg-white/60 rounded-2xl p-5 border border-black/10 space-y-3">
-          {/* Header with status + elapsed time */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              {loading && (
-                <span className="relative flex h-2.5 w-2.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[#36A64F] opacity-75" />
-                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[#36A64F]" />
-                </span>
-              )}
-              <p className="text-sm text-black/70">{progressMsg}</p>
-            </div>
-            <span className="text-sm font-['Space_Mono'] text-[#36A64F] tabular-nums">
-              {Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")}
-            </span>
-          </div>
+      {(loading || liveLogs.length > 0) && (() => {
+        const FRIENDLY_MESSAGES = [
+          "🍳 Cooking something up for you …",
+          "🎬 Director is analyzing your video frame by frame …",
+          "🔍 Finding the perfect moment for product placement …",
+          "🧠 AI is brainstorming creative placements …",
+          "🎨 Crafting a seamless product integration …",
+          "✂️ Snipping the best frames for your product …",
+          "🎥 Our AI director is setting up the shot …",
+          "🪄 Inserting your product into the scene …",
+          "💡 Figuring out the most natural-looking placement …",
+          "🎞️ Stitching everything together beautifully …",
+          "⚡ Almost there, adding the finishing touches …",
+          "🍿 Patience pays off — this is going to look great …",
+          "🔮 The AI is working its magic …",
+          "🎯 Fine-tuning the placement for perfection …",
+          "🚀 Wrapping up — your video is nearly ready …",
+        ];
+        const currentMsg = FRIENDLY_MESSAGES[friendlyStep % FRIENDLY_MESSAGES.length];
+        const minutes = Math.floor(elapsedSec / 60);
+        const seconds = elapsedSec % 60;
 
-          {/* Indeterminate progress bar while loading */}
-          {loading && (
-            <div className="w-full bg-black/10 rounded-full h-1.5 overflow-hidden">
-              <div className="bg-[#36A64F] h-1.5 rounded-full animate-pulse" style={{ width: "100%" }} />
-            </div>
-          )}
-
-          {/* Scrollable log list */}
-          <div className="max-h-48 overflow-y-auto rounded-lg bg-black/5 border border-black/10 p-3 font-['Space_Mono'] text-xs space-y-0.5">
-            {liveLogs.length === 0 && loading && (
-              <p className="text-black/30 italic">Waiting for logs …</p>
+        return (
+          <div className="bg-white/60 rounded-2xl p-6 border border-black/10 space-y-5">
+            {/* Countdown timer */}
+            {loading && (
+              <div className="text-center space-y-1">
+                <p className="text-xs font-['Space_Mono'] uppercase tracking-widest text-black/40">
+                  Estimated time remaining
+                </p>
+                <p className="text-4xl font-['Space_Mono'] font-bold text-[#36A64F] tabular-nums">
+                  {minutes}:{String(seconds).padStart(2, "0")}
+                </p>
+              </div>
             )}
-            {liveLogs.map((line, i) => (
-              <p
-                key={i}
-                className={
-                  line.includes("✗") || line.includes("ERROR")
-                    ? "text-[#FF6363]"
-                    : line.includes("✓") || line.includes("🎉")
-                    ? "text-[#36A64F]"
-                    : line.includes("⚠")
-                    ? "text-amber-600"
-                    : "text-black/50"
-                }
-              >
-                {line}
-              </p>
-            ))}
-            <div ref={logEndRef} />
+
+            {/* Animated progress bar */}
+            {loading && (
+              <div className="w-full bg-black/10 rounded-full h-1.5 overflow-hidden">
+                <div
+                  className="bg-[#36A64F] h-1.5 rounded-full transition-all duration-1000 ease-linear"
+                  style={{ width: `${Math.max(2, ((600 - elapsedSec) / 600) * 100)}%` }}
+                />
+              </div>
+            )}
+
+            {/* Friendly rotating message */}
+            {loading && (
+              <div className="text-center py-3">
+                <p
+                  key={friendlyStep}
+                  className="text-lg font-['Space_Grotesk'] font-medium text-black/70 animate-fade-in"
+                >
+                  {currentMsg}
+                </p>
+              </div>
+            )}
+
+            {/* Completion status (when done) */}
+            {!loading && liveLogs.length > 0 && (
+              <div className="text-center py-2">
+                <p className="text-sm font-['Space_Mono'] text-black/50">
+                  {liveLogs.some((l) => l.includes("✗") || l.includes("ERROR"))
+                    ? "⚠️ Something went wrong — check the error below"
+                    : "✅ All done! Your video is ready below"}
+                </p>
+              </div>
+            )}
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── ERROR ── */}
       {error && (
