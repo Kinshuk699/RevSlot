@@ -202,23 +202,42 @@ HOW THE PIPELINE WORKS (important — read carefully):
 6. The reference image is just for YOUR analysis — the generation model works from text alone
 
 PLACEMENT STRATEGY — Think like a real VFX product placement director:
-- BEST: A character naturally interacting with the product — holding a can, reaching for a packet, drinking from a bottle, using a device. This is the gold standard (Harvey Specter holding a Coca-Cola can in Suits).
-- GREAT: Product near a person in their environment — on the desk they are working at, on the counter they are cooking at, next to their hand on a table, on a coffee table in front of them
-- GOOD: Product on a clearly visible surface with correct 3D perspective — tables, counters, shelves
-- The product must look like it was ALWAYS part of the original scene — as if it was there when they filmed
+Your #1 PRIORITY is CHARACTER INTERACTION. The product should NOT just sit on a table — a person in the scene should be USING, HOLDING, or WEARING it.
+
+- GOLD STANDARD (always try this first): A character physically interacting with the product:
+  * Holding a can/bottle in their hand (Harvey Specter holding a Coca-Cola can in Suits)
+  * Wearing headphones/glasses/accessories (Joey wearing Beats headphones)
+  * Drinking from a bottle or can
+  * Typing on a laptop, using a phone, holding a product mid-conversation
+  * Reaching for or picking up the product
+  Pick a frame where a character's hand is visible and relatively still — sitting at a desk, standing casually, mid-conversation. The AI will modify their hand/body to naturally hold/wear the product.
+
+- FALLBACK (only if no person is visible or interaction is impossible): Product placed on a surface near a person
+  * On the desk they are working at, on the counter they are cooking at
+  * Next to their hand on a table, on a coffee table in front of them
+
+- AVOID: Product floating in empty space, product on the floor, product far from any person
+- The product must look like it was ALWAYS part of the original scene
 - Prefer frames where someone is relatively still (sitting, standing, talking) — NOT fast action
-- The product should be clearly visible but NATURAL — it is product placement, not a product advertisement
 - Consider the scene narrative: a kitchen scene means food/drinks, an office means tech/drinks, etc.
 
 THE EDITING INSTRUCTION (inpaintingPrompt) IS THE MOST CRITICAL FIELD:
 Write it as a direct command to an AI image editor. This is what actually controls the output quality.
-- Start with a clear action: "Add a [exact product] [where/how]"
-- Be VERY SPECIFIC about position: "on the wooden desk directly in front of the seated person", "being casually held in the person right hand", "on the kitchen counter to the left of the stove"
+
+FOR CHARACTER INTERACTION (preferred):
+- "The person is holding a [product] in their right hand, gripping it casually mid-conversation"
+- "The person is wearing [product] headphones over their ears, the brand logo visible on the side"
+- "The person is drinking from a [product] can, tilting it slightly toward their lips"
+- Describe exactly HOW the character interacts: which hand, grip style, body posture change
+- The character's pose may change slightly to accommodate holding/wearing the product — that is fine and expected
+
+FOR ALL PLACEMENTS:
+- Be VERY SPECIFIC about position and interaction
 - Describe the product accurately: brand name, type, packaging, distinctive colors/logo
-- Specify lighting match: "lit by the same warm overhead lamp", "matching the cool blue office lighting", "catching the natural window light from the left"
-- Specify perspective/angle: "viewed from the same slight downward angle as the camera", "angled naturally as if set down casually"
+- Specify lighting match: "lit by the same warm overhead lamp", "matching the cool blue office lighting"
+- Specify perspective/angle: "viewed from the same slight downward angle as the camera"
 - Specify scale: "at realistic proportional size relative to the person hand/the objects around it"
-- State what NOT to change: "Keep all other elements of the scene exactly as they are — the person, furniture, background, lighting"
+- State what NOT to change: "Keep the background, setting, and overall composition the same"
 - 80-150 words. More detail = better result.
 
 Return a JSON object with EXACTLY these fields:
@@ -229,7 +248,7 @@ Return a JSON object with EXACTLY these fields:
   "sceneDescription": "Detailed description of the scene — environment, people (positions, actions), objects, surfaces, lighting direction and color temperature, mood. 2-3 sentences.",
   "placementRationale": "WHY you chose this frame and this specific placement strategy. How does the product naturally fit into this exact moment? What makes this placement feel authentic rather than forced? 2-3 sentences.",
   "inpaintingPrompt": "EDITING INSTRUCTION — the direct command for the AI image editor. See detailed instructions above. 80-150 words.",
-  "videoMotionPrompt": "Prompt for image-to-video animation. Describe subtle ambient motion matching the original footage style. The placed product must remain stationary, sharp, and clearly visible throughout. Any character motion should be natural and gentle. 30-80 words.",
+  "videoMotionPrompt": "Prompt for image-to-video animation. This is CRITICAL — describe the character INTERACTING with the product: drinking from the can, adjusting the headphones, casually holding the bottle while talking, glancing at the phone screen, etc. The interaction should feel natural and effortless — like the character has been using this product their whole life. Also describe ambient scene motion (gentle camera drift, natural lighting). The product must remain clearly visible and recognizable throughout. 50-100 words.",
   "negativePrompt": "Comma-separated list of things to AVOID in both image and video generation."
 }
 
@@ -599,7 +618,7 @@ export async function processVideoAction(
     /* ── Phase 5: VIDEO GENERATION ── */
     if (compositedFrameUrl) {
       const motionPrompt = directorDecision?.videoMotionPrompt ??
-        `Smooth cinematic shot. The ${input.productDescription} sits stationary and clearly visible on a surface in the scene. Subtle ambient motion around it — gentle camera drift, natural lighting shifts. The product MUST remain sharp, stable, and unmoved throughout. Photorealistic, commercial quality.`;
+        `Smooth cinematic shot. The person in the scene is casually interacting with the ${input.productDescription} — holding it naturally, using it as part of their activity. Their motion is subtle and natural, as if they have been using this product their whole life. The ${input.productDescription} remains clearly visible and recognizable throughout. Gentle ambient motion, natural lighting shifts. Photorealistic, commercial quality.`;
 
       try {
         generatedVideoUrl = await generateVideoFromFrame({
