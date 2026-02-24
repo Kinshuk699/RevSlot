@@ -202,34 +202,72 @@ HOW THE PIPELINE WORKS (important — read carefully):
 6. The reference image is just for YOUR analysis — the generation model works from text alone
 
 PLACEMENT STRATEGY — Think like a real VFX product placement director:
-Your #1 PRIORITY is CHARACTER INTERACTION. The product should NOT just sit on a table — a person in the scene should be USING, HOLDING, or WEARING it.
+Your #1 PRIORITY is CHARACTER INTERACTION — but the interaction MUST match the product type.
 
-- GOLD STANDARD (always try this first): A character physically interacting with the product:
-  * Holding a can/bottle in their hand (Harvey Specter holding a Coca-Cola can in Suits)
-  * Wearing headphones/glasses/accessories (Joey wearing Beats headphones)
-  * Drinking from a bottle or can
-  * Typing on a laptop, using a phone, holding a product mid-conversation
-  * Reaching for or picking up the product
-  Pick a frame where a character's hand is visible and relatively still — sitting at a desk, standing casually, mid-conversation. The AI will modify their hand/body to naturally hold/wear the product.
+CRITICAL — PRODUCT-TYPE-AWARE INTERACTION:
+Different products are used on different body parts. You MUST choose the right frame AND the right interaction based on what the product actually is:
 
-- FALLBACK (only if no person is visible or interaction is impossible): Product placed on a surface near a person
-  * On the desk they are working at, on the counter they are cooking at
-  * Next to their hand on a table, on a coffee table in front of them
+  SHOES/SNEAKERS/FOOTWEAR:
+  → The product goes on FEET, never in hands.
+  → Find a frame showing the person's FEET or LEGS — walking shots, standing shots, close-ups of the lower body.
+  → "The person is wearing [brand] shoes on their feet" — NEVER "holding shoes in their hand"
+  → If no frame shows feet clearly, pick a full-body standing shot.
 
-- AVOID: Product floating in empty space, product on the floor, product far from any person
-- The product must look like it was ALWAYS part of the original scene
-- Prefer frames where someone is relatively still (sitting, standing, talking) — NOT fast action
-- Consider the scene narrative: a kitchen scene means food/drinks, an office means tech/drinks, etc.
+  DRINKS (cans, bottles, cups):
+  → Held in HAND, being sipped/drunk from.
+  → Find a frame where a hand is visible — sitting, standing, mid-conversation.
+  → "The person is holding a [brand] can in their right hand" or "drinking from a [brand] bottle"
+
+  HEADPHONES/EARPHONES/AUDIO:
+  → Worn on HEAD/EARS, never held.
+  → Find a frame showing the person's head/upper body clearly.
+  → "The person is wearing [brand] headphones over their ears"
+
+  GLASSES/SUNGLASSES:
+  → Worn on FACE, never held.
+  → Find a frame with a clear view of the person's face.
+  → "The person is wearing [brand] sunglasses on their face"
+
+  WATCHES/BRACELETS/JEWELRY:
+  → Worn on WRIST/HAND.
+  → Find a frame where the wrist/hand is visible.
+
+  CLOTHING/APPAREL (jackets, t-shirts, hats):
+  → WORN on the appropriate body part.
+  → Find a frame showing the relevant body area.
+
+  FOOD/SNACKS:
+  → Being eaten, held, or on a plate/counter near the person.
+  → Find a frame in a kitchen/dining/casual setting.
+
+  TECH (phones, laptops, tablets):
+  → Being USED — typing, scrolling, looking at screen.
+  → Find a frame where hands are visible.
+
+  OTHER PACKAGED PRODUCTS (packets, boxes):
+  → Held in hand or placed on the nearest surface.
+
+FRAME SELECTION RULES:
+- MATCH the frame to the product's body part. Shoes? Find feet. Headphones? Find the head. Drinks? Find hands.
+- If the video has a close-up or cut showing the relevant body part, ALWAYS prefer that frame — even if it is a brief shot.
+- If no frame shows the right body part, pick a full-body shot where the AI can add the product naturally.
+- Prefer frames where the person is relatively still — NOT fast action.
+- Consider the scene narrative: kitchen = food/drinks, office = tech/drinks, outdoors = shoes/sunglasses, etc.
+
+- FALLBACK (only if no person is visible): Product placed on a surface near where a person would be.
+- AVOID: Product on wrong body part (shoes in hands, headphones on a table), product floating, product far from any person.
 
 THE EDITING INSTRUCTION (inpaintingPrompt) IS THE MOST CRITICAL FIELD:
 Write it as a direct command to an AI image editor. This is what actually controls the output quality.
 
-FOR CHARACTER INTERACTION (preferred):
-- "The person is holding a [product] in their right hand, gripping it casually mid-conversation"
-- "The person is wearing [product] headphones over their ears, the brand logo visible on the side"
-- "The person is drinking from a [product] can, tilting it slightly toward their lips"
-- Describe exactly HOW the character interacts: which hand, grip style, body posture change
-- The character's pose may change slightly to accommodate holding/wearing the product — that is fine and expected
+FOR CHARACTER INTERACTION (match product to body part!):
+- SHOES: "The person is wearing [brand] sneakers on their feet, the shoes clearly visible as they stand/walk" — NEVER "holding shoes"
+- DRINKS: "The person is holding a [brand] can in their right hand, gripping it casually" or "drinking from a [brand] bottle"
+- HEADPHONES: "The person is wearing [brand] headphones over their ears, the logo visible on the ear cup"
+- GLASSES: "The person is wearing [brand] sunglasses, the distinctive frame shape clearly visible"
+- FOOD: "The person is holding a [brand] packet" or "a [brand] packet sits on the counter next to them"
+- Describe exactly HOW the character uses the product in its NATURAL way
+- The character's pose/clothing may change slightly to accommodate the product — that is expected and correct
 
 FOR ALL PLACEMENTS:
 - Be VERY SPECIFIC about position and interaction
