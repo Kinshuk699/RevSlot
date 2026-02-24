@@ -92,19 +92,43 @@ export function VideoHistory({ videos, plan }: VideoHistoryProps) {
             </button>
 
             {/* Expanded: VibePlayer */}
-            {isExpanded && video.status === "ready" && (
-              <div className="border-t border-zinc-800 bg-zinc-950/50 p-4">
-                <div className="relative mx-auto max-w-2xl">
-                  <VibePlayer
-                    originalVideoUrl={video.source_video_url}
-                    aiClipUrl={video.processed_video_url !== video.source_video_url ? video.processed_video_url : null}
-                    insertAtTimestamp={video.ad_slot.timestamp}
-                    adSlot={video.ad_slot}
-                  />
-                  <Watermark visible={isFree} />
+            {isExpanded && video.status === "ready" && (() => {
+              const hasAiClip = video.processed_video_url !== video.source_video_url;
+              const originalIsBroken = video.source_video_url.startsWith("blob:");
+
+              // If we have an AI clip but the original is a dead blob URL,
+              // just show the AI clip directly as a standalone video
+              if (hasAiClip && originalIsBroken) {
+                return (
+                  <div className="border-t border-zinc-800 bg-zinc-950/50 p-4">
+                    <div className="relative mx-auto max-w-2xl">
+                      <video
+                        src={video.processed_video_url}
+                        controls
+                        playsInline
+                        className="w-full rounded-xl bg-black"
+                      />
+                      <Watermark visible={isFree} />
+                    </div>
+                  </div>
+                );
+              }
+
+              // Normal case: both URLs are valid
+              return (
+                <div className="border-t border-zinc-800 bg-zinc-950/50 p-4">
+                  <div className="relative mx-auto max-w-2xl">
+                    <VibePlayer
+                      originalVideoUrl={video.source_video_url}
+                      aiClipUrl={hasAiClip ? video.processed_video_url : null}
+                      insertAtTimestamp={video.ad_slot.timestamp}
+                      adSlot={video.ad_slot}
+                    />
+                    <Watermark visible={isFree} />
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Expanding a failed video */}
             {isExpanded && video.status === "failed" && (
