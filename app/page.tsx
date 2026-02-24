@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { PricingGrid } from "@/components/PricingCard";
 import { HeroAnimation } from "@/components/HeroAnimation";
 import { HowItWorks } from "@/components/HowItWorks";
+import { CreatorRibbons } from "@/components/CreatorRibbons";
 
 export default async function Home() {
   const { userId } = await auth();
@@ -62,43 +63,10 @@ export default async function Home() {
       {/* ─── How it works (carousel, full-bleed) ─── */}
       <HowItWorks />
 
+      {/* ─── Built for Every Creator (ribbon boxes) ─── */}
+      <CreatorRibbons />
+
       <main className="mx-auto flex w-full max-w-6xl flex-col px-6 sm:px-8 lg:px-10">
-
-        {/* ─── Use Cases / Social Proof ─── */}
-        <section className="mt-20">
-          <h2 className="mb-3 text-center font-['Space_Grotesk'] text-2xl font-bold tracking-tight">
-            Built for Every Creator
-          </h2>
-          <p className="mx-auto mb-8 max-w-lg text-center text-sm text-black/60">
-            Whether you&apos;re a solo influencer or a brand agency, RevSlot automates product placement at a fraction of the cost.
-          </p>
-          <div className="grid gap-6 md:grid-cols-3">
-            {[
-              {
-                emoji: "🎬",
-                title: "Content Creators",
-                desc: "Monetize your existing videos by inserting brand-native product placements — no reshoots, no manual editing.",
-              },
-              {
-                emoji: "🛍️",
-                title: "E-Commerce Brands",
-                desc: "See your product in lifestyle scenes instantly. Generate shoppable video ads with a single click.",
-              },
-              {
-                emoji: "📊",
-                title: "Ad Agencies",
-                desc: "Pitch product placement concepts in hours, not weeks. A/B test placements across different scenes and products.",
-              },
-            ].map((uc) => (
-              <div key={uc.title} className="rounded-2xl border border-black/10 bg-white/50 p-6 text-center">
-                <span className="text-3xl">{uc.emoji}</span>
-                <h3 className="mt-3 font-['Space_Grotesk'] text-lg font-semibold">{uc.title}</h3>
-                <p className="mt-1 text-sm text-black/60">{uc.desc}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
         {/* ─── Tech Stack ─── */}
         <section className="mt-20">
           <h2 className="mb-8 text-center font-['Space_Grotesk'] text-2xl font-bold tracking-tight">
