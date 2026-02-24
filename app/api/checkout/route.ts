@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
       line_items: [{ price: priceId, quantity: 1 }],
       success_url: `${origin}/dashboard?checkout=success`,
       cancel_url: `${origin}/?checkout=cancelled`,
-      metadata: { clerkUserId: userId },
+      metadata: { clerkUserId: userId, priceId },
     });
 
     return NextResponse.json({ url: session.url });

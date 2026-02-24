@@ -36,13 +36,14 @@ export async function POST(req: NextRequest) {
     const priceId = session.metadata?.priceId;
 
     if (clerkUserId) {
-      // Determine plan from the price
       const creatorPriceId = process.env.NEXT_PUBLIC_STRIPE_CREATOR_PRICE_ID;
       const studioPriceId = process.env.NEXT_PUBLIC_STRIPE_STUDIO_PRICE_ID;
 
       let plan = "creator"; // default upgrade
       if (priceId === studioPriceId) plan = "studio";
       else if (priceId === creatorPriceId) plan = "creator";
+
+      console.log("[Webhook] clerkUserId:", clerkUserId, "priceId:", priceId, "→ plan:", plan);
 
       await supabase
         .from("profiles")
