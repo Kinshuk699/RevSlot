@@ -758,7 +758,7 @@ export async function processVideoAction(
   const adSlot: AdSlot = {
     timestamp: chosenTimestamp,
     productName: productName || "Featured Product",
-    productImageUrl: DEFAULT_PRODUCT_IMAGE,
+    productImageUrl: input.productImageUrl || DEFAULT_PRODUCT_IMAGE,
     buyUrl: input.buyUrl || "https://stripe.com",
     placement: { x: maskRegion.x + maskRegion.w / 2, y: maskRegion.y },
   };

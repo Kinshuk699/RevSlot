@@ -139,17 +139,22 @@ export function VibePlayer({
     const video = originalVideoRef.current;
     if (!video) return;
 
+    // Cut 0.3s BEFORE the chosen timestamp so the viewer doesn't see
+    // the original product at peak visibility right before the switch.
+    const cutPoint = Math.max(0, insertAtTimestamp - 0.3);
+
     const check = () => {
       if (
         phase === "original-before" &&
-        video.currentTime >= insertAtTimestamp
+        video.currentTime >= cutPoint
       ) {
         video.pause();
         setPhase("ai-clip");
       }
     };
 
-    const interval = setInterval(check, 200);
+    // Poll every 50ms for tighter timing (was 200ms)
+    const interval = setInterval(check, 50);
     return () => clearInterval(interval);
   }, [phase, insertAtTimestamp, hasSplice, viewMode]);
 
@@ -173,7 +178,7 @@ export function VibePlayer({
     }
   }, [phase, insertAtTimestamp, aiClipDuration]);
 
-  // When AI clip ends → switch back to original video at a LATER point
+  // When AI clip ends → cut back to original video at a LATER point
   const handleAiClipEnded = useCallback(() => {
     setPhase("original-after");
     setShowOverlay(false);
@@ -424,7 +429,8 @@ export function VibePlayer({
         <video
           ref={originalVideoRef}
           src={originalVideoUrl}
-          className={`h-auto w-full bg-black transition-opacity duration-700 ease-in-out ${
+          muted
+          className={`h-auto w-full bg-black transition-opacity duration-[50ms] ease-linear ${
             showOriginal ? "opacity-100" : "opacity-0 pointer-events-none"
           }`}
           playsInline
@@ -437,7 +443,8 @@ export function VibePlayer({
           <video
             ref={aiVideoRef}
             src={aiClipUrl}
-            className={`absolute inset-0 h-full w-full object-contain bg-black transition-opacity duration-700 ease-in-out ${
+            muted
+            className={`absolute inset-0 h-full w-full object-contain bg-black transition-opacity duration-[50ms] ease-linear ${
               showAiClip ? "opacity-100" : "opacity-0 pointer-events-none"
             }`}
             playsInline
