@@ -88,3 +88,12 @@ body {
 .animate-marquee {
   animation: marquee 30s linear infinite;
 }
+
+@keyframes carousel {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-25%); }
+}
+
+.animate-carousel {
+  animation: carousel 20s linear infinite;
+}

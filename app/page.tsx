@@ -3,6 +3,7 @@ import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
 import { PricingGrid } from "@/components/PricingCard";
 import { HeroAnimation } from "@/components/HeroAnimation";
+import { HowItWorks } from "@/components/HowItWorks";
 
 export default async function Home() {
   const { userId } = await auth();
@@ -56,23 +57,12 @@ export default async function Home() {
           </p>
         </section>
 
-        {/* ─── How it works ─── */}
-        <section className="mt-20">
-          <h2 className="mb-8 text-center font-['Space_Grotesk'] text-2xl font-bold tracking-tight">How It Works</h2>
-          <div className="grid gap-6 md:grid-cols-3">
-            {[
-              { step: "01", title: "Upload Video", desc: "Drop in any video — social clip, vlog, or product shot." },
-              { step: "02", title: "Add Product", desc: "Describe the product and provide a reference image." },
-              { step: "03", title: "AI Magic", desc: "Our AI Director finds the perfect moment and generates a seamless placement." },
-            ].map((item) => (
-              <div key={item.step} className="rounded-2xl border border-black/10 bg-white/50 p-6">
-                <span className="font-['Space_Mono'] text-xs font-bold uppercase tracking-widest text-[#36A64F]">{item.step}</span>
-                <h3 className="mt-2 font-['Space_Grotesk'] text-lg font-semibold">{item.title}</h3>
-                <p className="mt-1 text-sm text-black/60">{item.desc}</p>
-              </div>
-            ))}
-          </div>
-        </section>
+      </main>
+
+      {/* ─── How it works (carousel, full-bleed) ─── */}
+      <HowItWorks />
+
+      <main className="mx-auto flex w-full max-w-6xl flex-col px-6 sm:px-8 lg:px-10">
 
         {/* ─── Use Cases / Social Proof ─── */}
         <section className="mt-20">
