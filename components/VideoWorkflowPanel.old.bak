@@ -1,0 +1,656 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+import {
+  processVideoAction,
+  type ProcessVideoResult,
+} from "@/app/actions/process-video";
+import { VibePlayer } from "@/components/VibePlayer";
+
+/* ═══════════════════════════  Types  ═══════════════════════════════ */
+
+type WorkflowInput = {
+  sourceVideoUrl: string;
+  brand: string;
+  productDescription: string;
+  buyUrl: string;
+  productImageUrl: string;
+};
+
+const defaultInput: WorkflowInput = {
+  sourceVideoUrl:
+    "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
+  brand: "Red Bull",
+  productDescription: "a silver and blue Red Bull energy drink can",
+  buyUrl: "https://stripe.com",
+  productImageUrl: "",
+};
+
+/* ═══════  Frame extraction (runs in browser via Canvas)  ══════════ */
+
+type FrameResult = {
+  dataUrl: string;
+  width: number;
+  height: number;
+};
+
+function extractFrame(
+  videoUrl: string,
+  timestamp: number,
+): Promise<FrameResult> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = "auto";
+
+    const cleanup = () => video.remove();
+
+    video.addEventListener(
+      "seeked",
+      () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const maxDim = 1024;
+          const scale = Math.min(
+            maxDim / video.videoWidth,
+            maxDim / video.videoHeight,
+            1,
+          );
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
+
+          const ctx = canvas.getContext("2d");
+          if (!ctx) throw new Error("Canvas not available");
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+          cleanup();
+          resolve({
+            dataUrl: canvas.toDataURL("image/jpeg", 0.85),
+            width: canvas.width,
+            height: canvas.height,
+          });
+        } catch (err) {
+          cleanup();
+          reject(err);
+        }
+      },
+      { once: true },
+    );
+
+    video.addEventListener(
+      "error",
+      () => {
+        cleanup();
+        reject(
+          new Error(
+            "Could not load video — make sure the URL is direct (not YouTube) and supports CORS.",
+          ),
+        );
+      },
+      { once: true },
+    );
+
+    video.addEventListener(
+      "loadeddata",
+      () => {
+        video.currentTime = Math.min(timestamp, video.duration - 0.1);
+      },
+      { once: true },
+    );
+
+    video.src = videoUrl;
+    video.load();
+  });
+}
+
+/* ═══════ Mask generation (black canvas + white rect = inpaint area) ═══════ */
+
+const MASK_REGION = { x: 0.35, y: 0.2, w: 0.3, h: 0.5 };
+
+function generateMaskDataUrl(
+  width: number,
+  height: number,
+  region = MASK_REGION,
+): string {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return "";
+
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(
+    Math.round(region.x * width),
+    Math.round(region.y * height),
+    Math.round(region.w * width),
+    Math.round(region.h * height),
+  );
+
+  return canvas.toDataURL("image/png");
+}
+
+/* ═══════════════════════  Component  ══════════════════════════════ */
+
+export function VideoWorkflowPanel() {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [step, setStep] = useState("");
+  const [progress, setProgress] = useState(0);
+  const [input, setInput] = useState<WorkflowInput>(defaultInput);
+  const [result, setResult] = useState<ProcessVideoResult | null>(null);
+
+  /* ─── Timestamp picker state ─── */
+  const [adTimestamp, setAdTimestamp] = useState(3);
+  const [videoDuration, setVideoDuration] = useState(10);
+  const [previewFrame, setPreviewFrame] = useState<string | null>(null);
+
+  /* ─── Interactive mask drawing state ─── */
+  const [maskRegion, setMaskRegion] = useState(MASK_REGION);
+  const [isDrawing, setIsDrawing] = useState(false);
+  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
+  const [hasUserMask, setHasUserMask] = useState(false);
+  const maskContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleMaskMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      setDrawStart({ x, y });
+      setIsDrawing(true);
+    },
+    [],
+  );
+
+  const handleMaskMouseMove = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (!isDrawing || !drawStart) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      setMaskRegion({
+        x: Math.min(drawStart.x, x),
+        y: Math.min(drawStart.y, y),
+        w: Math.abs(x - drawStart.x),
+        h: Math.abs(y - drawStart.y),
+      });
+    },
+    [isDrawing, drawStart],
+  );
+
+  const handleMaskMouseUp = useCallback(() => {
+    if (isDrawing && drawStart) {
+      setHasUserMask(true);
+    }
+    setIsDrawing(false);
+    setDrawStart(null);
+  }, [isDrawing, drawStart]);
+
+  // Get video duration when URL changes
+  useEffect(() => {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.preload = "metadata";
+
+    video.addEventListener("loadedmetadata", () => {
+      if (video.duration && isFinite(video.duration)) {
+        setVideoDuration(video.duration);
+        setAdTimestamp(Math.round(video.duration * 0.25 * 10) / 10);
+      }
+      video.remove();
+    });
+
+    video.addEventListener("error", () => {
+      video.remove();
+    });
+
+    video.src = input.sourceVideoUrl;
+    video.load();
+  }, [input.sourceVideoUrl]);
+
+  // Grab a preview thumbnail when slider changes
+  const grabPreview = useCallback(
+    async (ts: number) => {
+      try {
+        const frame = await extractFrame(input.sourceVideoUrl, ts);
+        setPreviewFrame(frame.dataUrl);
+      } catch {
+        setPreviewFrame(null);
+      }
+    },
+    [input.sourceVideoUrl],
+  );
+
+  useEffect(() => {
+    const timeout = setTimeout(() => grabPreview(adTimestamp), 400);
+    return () => clearTimeout(timeout);
+  }, [adTimestamp, grabPreview]);
+
+  const statusText = useMemo(() => {
+    if (isProcessing) return step;
+    if (result) {
+      if (result.aiClipUrl) {
+        return "✓ AI product placement video generated! Watch below.";
+      }
+      if (result.inpaintedFrameUrl) {
+        return "✓ Product placed in frame (video gen unavailable)";
+      }
+      return "Ready — using overlay mode";
+    }
+    return "Idle";
+  }, [isProcessing, step, result]);
+
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    if (isProcessing) return;
+
+    setIsProcessing(true);
+    setResult(null);
+    setProgress(0);
+
+    try {
+      setStep(`① Extracting frame at ${adTimestamp.toFixed(1)}s …`);
+      setProgress(5);
+      let frameDataUrl: string | undefined;
+      let maskDataUrl: string | undefined;
+
+      try {
+        const frame = await extractFrame(input.sourceVideoUrl, adTimestamp);
+        frameDataUrl = frame.dataUrl;
+        maskDataUrl = generateMaskDataUrl(frame.width, frame.height, maskRegion);
+        setStep("② Frame + mask captured!");
+        setProgress(10);
+      } catch (err) {
+        console.warn("Frame extraction failed:", err);
+        setStep("⚠ Frame extraction failed (CORS). Falling back …");
+        toast.warning(
+          "Could not extract frame — video may block CORS. Using overlay mode.",
+        );
+      }
+
+      setStep(
+        frameDataUrl
+          ? "③ Gemini is watching your entire video …"
+          : "③ Generating product image …",
+      );
+      setProgress(15);
+
+      // Start a progress simulation for the long server action
+      const progressInterval = setInterval(() => {
+        setProgress((prev) => {
+          // Slowly crawl from current to 90%, never exceed 90 while processing
+          if (prev < 30) return prev + 2;
+          if (prev < 50) return prev + 1;
+          if (prev < 70) return prev + 0.5;
+          if (prev < 85) return prev + 0.2;
+          return Math.min(prev + 0.1, 90);
+        });
+      }, 2000);
+
+      // Update step text based on elapsed time (matches new Gemini pipeline)
+      const stepInterval = setInterval(() => {
+        setProgress((prev) => {
+          if (prev >= 15 && prev < 25) setStep("③ Gemini is analysing the full video (scene, mood, camera) …");
+          if (prev >= 25 && prev < 35) setStep("④ AI Creative Director is writing the placement script …");
+          if (prev >= 35 && prev < 45) setStep("⑤ Preparing product image …");
+          if (prev >= 45 && prev < 55) setStep("⑥ Compositing product with Director's guidance …");
+          if (prev >= 55 && prev < 70) setStep("⑦ Generating video clip with Director's motion script …");
+          if (prev >= 70 && prev < 85) setStep("⑧ Kling is animating … (this takes 1-5 min)");
+          if (prev >= 85) setStep("⑨ Almost there — finalising …");
+          return prev;
+        });
+      }, 3000);
+
+      const next = await processVideoAction({
+        ...input,
+        frameDataUrl,
+        maskDataUrl,
+        timestamp: adTimestamp,
+        maskRegion,
+      });
+
+      clearInterval(progressInterval);
+      clearInterval(stepInterval);
+      setProgress(100);
+      setStep("✓ Done!");
+      setResult(next);
+
+      if (next.aiClipUrl) {
+        toast.success(
+          "AI product placement video generated! The ad clip is spliced into the original video below.",
+        );
+      } else if (next.inpaintedFrameUrl) {
+        toast.success(
+          "Product painted into frame! Video generation was unavailable.",
+        );
+      } else {
+        toast.info("Using original video with shoppable overlay.");
+      }
+
+      if (!next.savedToSupabase) {
+        toast.warning(`DB save failed: ${next.saveError ?? "unknown"}`);
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error ? err.message : "Processing failed.",
+      );
+    } finally {
+      setIsProcessing(false);
+      setStep("");
+    }
+  };
+
+  const handleRetry = () => {
+    const fakeEvent = {
+      preventDefault: () => {},
+    } as React.FormEvent<HTMLFormElement>;
+    handleSubmit(fakeEvent);
+  };
+
+  return (
+    <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
+      <h2 className="text-xl font-semibold">AI Video Product Placement</h2>
+      <p className="mt-2 text-sm text-zinc-400">
+        Paste a video URL, describe your product, choose{" "}
+        <strong className="text-zinc-200">when</strong> in the video to
+        place the ad. AI extracts that frame, paints your product into the
+        scene, generates a video clip, and splices it into the original.
+      </p>
+
+      {/* ─── Form ─── */}
+      <form
+        onSubmit={handleSubmit}
+        className="mt-5 grid gap-3 md:grid-cols-2"
+      >
+        <label className="flex flex-col gap-1 text-sm text-zinc-300 md:col-span-2">
+          Video URL
+          <input
+            value={input.sourceVideoUrl}
+            onChange={(e) =>
+              setInput((p) => ({ ...p, sourceVideoUrl: e.target.value }))
+            }
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+            placeholder="https://..."
+            required
+          />
+        </label>
+
+        {/* ─── Timestamp Picker ─── */}
+        <div className="flex flex-col gap-2 md:col-span-2">
+          <label className="text-sm text-zinc-300">
+            Ad Placement Time:{" "}
+            <span className="font-mono text-emerald-400">
+              {adTimestamp.toFixed(1)}s
+            </span>{" "}
+            <span className="text-zinc-500">
+              / {videoDuration.toFixed(1)}s
+            </span>
+          </label>
+          <input
+            type="range"
+            min={0.5}
+            max={Math.max(videoDuration - 0.5, 1)}
+            step={0.1}
+            value={adTimestamp}
+            onChange={(e) => setAdTimestamp(parseFloat(e.target.value))}
+            className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-emerald-500"
+          />
+          <div className="flex flex-col gap-3">
+            {previewFrame ? (
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
+                {/* Interactive mask-drawing canvas */}
+                <div
+                  ref={maskContainerRef}
+                  className="relative shrink-0 cursor-crosshair select-none overflow-hidden rounded-lg border-2 border-zinc-700 hover:border-emerald-500/60"
+                  style={{ maxWidth: 480 }}
+                  onMouseDown={handleMaskMouseDown}
+                  onMouseMove={handleMaskMouseMove}
+                  onMouseUp={handleMaskMouseUp}
+                  onMouseLeave={handleMaskMouseUp}
+                >
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={previewFrame}
+                    alt="Frame preview"
+                    className="block w-full"
+                    draggable={false}
+                  />
+                  {/* Mask overlay */}
+                  <div
+                    className="pointer-events-none absolute border-2 border-dashed border-emerald-400 bg-emerald-400/20"
+                    style={{
+                      left: `${maskRegion.x * 100}%`,
+                      top: `${maskRegion.y * 100}%`,
+                      width: `${maskRegion.w * 100}%`,
+                      height: `${maskRegion.h * 100}%`,
+                    }}
+                  >
+                    <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-emerald-600/90 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                      Product area
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <span className="text-xs font-medium text-emerald-400">
+                    {hasUserMask
+                      ? "✓ Custom region selected"
+                      : "Click & drag on the frame to mark where the product should appear"}
+                  </span>
+                  <span className="text-xs text-zinc-500">
+                    The green box shows the inpainting target area.
+                    AI will analyse the scene and paint your product naturally into
+                    this region, matching the lighting and perspective.
+                  </span>
+                  {hasUserMask && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMaskRegion(MASK_REGION);
+                        setHasUserMask(false);
+                      }}
+                      className="mt-1 w-fit rounded border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400 hover:text-zinc-200"
+                    >
+                      Reset to default
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <span className="text-xs text-zinc-500">
+                Loading frame preview…
+              </span>
+            )}
+          </div>
+        </div>
+
+        <label className="flex flex-col gap-1 text-sm text-zinc-300">
+          Brand
+          <input
+            value={input.brand}
+            onChange={(e) =>
+              setInput((p) => ({ ...p, brand: e.target.value }))
+            }
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+            required
+          />
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm text-zinc-300">
+          Buy URL
+          <input
+            value={input.buyUrl}
+            onChange={(e) =>
+              setInput((p) => ({ ...p, buyUrl: e.target.value }))
+            }
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+          />
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm text-zinc-300 md:col-span-2">
+          Product Description
+          <input
+            value={input.productDescription}
+            onChange={(e) =>
+              setInput((p) => ({
+                ...p,
+                productDescription: e.target.value,
+              }))
+            }
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+            placeholder="e.g. red energy drink can, white Nike sneaker, black headphones"
+            required
+          />
+          <span className="text-xs text-zinc-500">
+            AI paints this product INTO the video frame at your chosen
+            timestamp, then animates it
+          </span>
+        </label>
+
+        <label className="flex flex-col gap-1 text-sm text-zinc-300 md:col-span-2">
+          Product image URL{" "}
+          <span className="text-zinc-600">
+            (optional — leave empty to use AI-generated)
+          </span>
+          <input
+            value={input.productImageUrl}
+            onChange={(e) =>
+              setInput((p) => ({ ...p, productImageUrl: e.target.value }))
+            }
+            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+            placeholder="https://... or leave empty"
+          />
+        </label>
+
+        <div className="mt-1 flex flex-wrap items-center gap-2 md:col-span-2">
+          <button
+            type="submit"
+            disabled={isProcessing}
+            className="rounded-md bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            {isProcessing ? "Processing…" : "Process Video"}
+          </button>
+          <button
+            type="button"
+            onClick={handleRetry}
+            disabled={isProcessing}
+            className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-70"
+          >
+            Retry
+          </button>
+          <span className="text-xs text-zinc-400">
+            Status: {statusText}
+          </span>
+        </div>
+      </form>
+
+      {/* ─── Progress spinner ─── */}
+      {isProcessing && (
+        <div className="mt-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+          <div className="flex items-center gap-3">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
+            <span className="text-sm text-zinc-300">{step}</span>
+            <span className="ml-auto font-mono text-sm font-semibold text-emerald-400">
+              {Math.round(progress)}%
+            </span>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
+            <div
+              className="h-full rounded-full bg-linear-to-r from-emerald-600 via-emerald-400 to-emerald-500 transition-all duration-1000 ease-out"
+              style={{ width: `${Math.round(progress)}%` }}
+            />
+          </div>
+          <p className="mt-2 text-xs text-zinc-500">
+            Gemini video analysis ~10s &bull; Creative direction ~5s &bull; Compositing ~10s &bull; Video generation 1-5 min.
+            Don&apos;t close this tab.
+          </p>
+        </div>
+      )}
+
+      {/* ─── Results ─── */}
+      {result && !isProcessing ? (
+        <div className="mt-6 space-y-4">
+          {/* AI Director's Analysis & Rationale */}
+          {(result.videoAnalysis || result.creativeDirection) && (
+            <div className="rounded-xl border border-purple-500/20 bg-purple-950/20 p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold text-purple-400">
+                <span className="text-lg">🎬</span> AI Director&apos;s Analysis
+              </h3>
+
+              {result.videoAnalysis && (
+                <div className="mb-3 space-y-1.5 text-xs text-zinc-400">
+                  <p>
+                    <span className="font-medium text-zinc-300">Scene:</span>{" "}
+                    {result.videoAnalysis.sceneDescription}
+                  </p>
+                  <p>
+                    <span className="font-medium text-zinc-300">Mood:</span>{" "}
+                    {result.videoAnalysis.mood} &bull;{" "}
+                    <span className="font-medium text-zinc-300">Camera:</span>{" "}
+                    {result.videoAnalysis.cameraWork} &bull;{" "}
+                    <span className="font-medium text-zinc-300">Style:</span>{" "}
+                    {result.videoAnalysis.visualStyle}
+                  </p>
+                  {result.videoAnalysis.suggestedPlacementMoments.length > 0 && (
+                    <p>
+                      <span className="font-medium text-zinc-300">Placement opportunities:</span>{" "}
+                      {result.videoAnalysis.suggestedPlacementMoments.join(" | ")}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {result.creativeDirection && (
+                <div className="rounded-lg border border-emerald-500/20 bg-emerald-950/20 p-3">
+                  <p className="mb-1 text-xs font-medium text-emerald-400">
+                    Why this placement works:
+                  </p>
+                  <p className="text-xs text-zinc-300">
+                    {result.creativeDirection.placementRationale}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Inpainted frame preview */}
+          {result.inpaintedFrameUrl ? (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+              <h3 className="mb-2 text-sm font-semibold text-emerald-400">
+                AI-Inpainted Frame (product placed in scene)
+              </h3>
+              <div className="flex flex-col items-start gap-4 sm:flex-row">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={result.inpaintedFrameUrl}
+                  alt="Product in scene"
+                  className="w-full max-w-md rounded-lg border border-zinc-700"
+                />
+                <p className="text-xs text-zinc-500">
+                  AI Director guided the inpainting at{" "}
+                  {result.insertAtTimestamp.toFixed(1)}s.
+                  {result.aiClipUrl
+                    ? " This was animated into a 5s clip and spliced into the video below."
+                    : " Video generation was unavailable — showing original video with shoppable overlay."}
+                </p>
+              </div>
+            </div>
+          ) : null}
+
+          {/* Video player — splices AI clip into original */}
+          <VibePlayer
+            originalVideoUrl={result.originalVideoUrl}
+            aiClipUrl={result.aiClipUrl}
+            insertAtTimestamp={result.insertAtTimestamp}
+            adSlot={result.adSlot}
+          />
+        </div>
+      ) : null}
+    </section>
+  );
+}

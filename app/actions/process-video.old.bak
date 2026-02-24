@@ -1,0 +1,791 @@
+"use server";
+
+import { auth } from "@clerk/nextjs/server";
+import type { AdSlot } from "@/components/VibePlayer";
+import { getSupabaseServiceRoleClient } from "@/lib/supabase";
+
+/* ═══════════════════════════  Types  ═══════════════════════════════ */
+
+type ProcessVideoInput = {
+  sourceVideoUrl: string;
+  brand: string;
+  productDescription: string;
+  buyUrl?: string;
+  productImageUrl?: string;
+  /** base64 data-URL of the extracted video frame (JPEG) */
+  frameDataUrl?: string;
+  /** base64 data-URL of the inpainting mask (PNG, white=inpaint area) */
+  maskDataUrl?: string;
+  /** user-chosen timestamp in the video to place the product */
+  timestamp?: number;
+  /** user-drawn mask region (0-1 normalised coordinates) */
+  maskRegion?: { x: number; y: number; w: number; h: number };
+};
+
+/** Gemini's comprehensive analysis of the entire video */
+export type VideoAnalysis = {
+  sceneDescription: string;
+  mood: string;
+  visualStyle: string;
+  keyObjects: string[];
+  cameraWork: string;
+  pacing: string;
+  suggestedPlacementMoments: string[];
+};
+
+/** AI Creative Director's placement decisions */
+export type CreativeDirection = {
+  inpaintingPrompt: string;
+  videoMotionPrompt: string;
+  placementRationale: string;
+  negativePrompt: string;
+};
+
+export type ProcessVideoResult = {
+  status: "ready";
+  originalVideoUrl: string;
+  aiClipUrl: string | null;
+  inpaintedFrameUrl: string | null;
+  processedVideoUrl: string;
+  adSlot: AdSlot;
+  insertAtTimestamp: number;
+  pipelineSteps: string[];
+  savedToSupabase: boolean;
+  saveError?: string;
+  /** Gemini's video analysis (shown in UI for transparency) */
+  videoAnalysis?: VideoAnalysis | null;
+  /** AI Creative Director output (shown in UI) */
+  creativeDirection?: CreativeDirection | null;
+};
+
+/* ═══════════════════════════  Constants  ═══════════════════════════ */
+
+const DEFAULT_TIMESTAMP = 3;
+const DEFAULT_PRODUCT_IMAGE =
+  "https://images.unsplash.com/photo-1523362628745-0c100150b504?auto=format&fit=crop&w=400&q=80";
+const FAL_POLL_INTERVAL = 5_000;
+const FAL_MAX_POLLS = 120; // 120 × 5 s = 10 min max wait
+
+/* ═══════════════  Gemini helper  ══════════════════════════════════ */
+
+async function callGemini(
+  parts: Record<string, unknown>[],
+  config?: { temperature?: number; maxOutputTokens?: number },
+): Promise<string | null> {
+  const key = process.env.GEMINI_API_KEY;
+  if (!key) return null;
+
+  try {
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ parts }],
+          generationConfig: {
+            temperature: config?.temperature ?? 0.3,
+            maxOutputTokens: config?.maxOutputTokens ?? 2000,
+          },
+        }),
+      },
+    );
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.warn("[Gemini]", res.status, err.slice(0, 300));
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      candidates?: { content?: { parts?: { text?: string }[] } }[];
+    };
+    return data.candidates?.[0]?.content?.parts?.[0]?.text ?? null;
+  } catch (err) {
+    console.warn("[Gemini] Exception:", err);
+    return null;
+  }
+}
+
+function parseJsonFromLLM<T>(raw: string): T | null {
+  try {
+    const cleaned = raw
+      .replace(/```json\s*/gi, "")
+      .replace(/```\s*/g, "")
+      .trim();
+    return JSON.parse(cleaned) as T;
+  } catch {
+    return null;
+  }
+}
+
+/* ═══════ Phase 1 — Full video understanding (Gemini 2.0 Flash) ═══ */
+/*
+ * Instead of analysing a single frame, Gemini watches the ENTIRE video
+ * and provides a comprehensive breakdown of the scene, mood, camera work,
+ * and — crucially — suggests natural moments for product placement.
+ */
+async function analyzeVideoWithGemini(
+  videoUrl: string,
+): Promise<VideoAnalysis | null> {
+  if (!process.env.GEMINI_API_KEY) {
+    console.log("[Gemini] No GEMINI_API_KEY — skipping video analysis");
+    return null;
+  }
+
+  console.log("[Gemini] Phase 1 → Downloading video for full analysis …");
+  try {
+    const videoRes = await fetch(videoUrl);
+    if (!videoRes.ok) {
+      console.warn("[Gemini] Video download failed:", videoRes.status);
+      return null;
+    }
+
+    const buf = await videoRes.arrayBuffer();
+    console.log(
+      `[Gemini] Video: ${(buf.byteLength / 1024 / 1024).toFixed(1)} MB`,
+    );
+
+    const mimeType =
+      videoRes.headers.get("content-type")?.split(";")[0]?.trim() ||
+      "video/mp4";
+    const base64 = Buffer.from(buf).toString("base64");
+
+    const raw = await callGemini(
+      [
+        { inlineData: { mimeType, data: base64 } },
+        {
+          text: `You are a professional video analyst for advertising and product placement.
+Watch this entire video carefully — every second matters.
+
+Return a JSON object with EXACTLY these fields (no extra keys):
+{
+  "sceneDescription": "A detailed paragraph: setting, environment, what happens throughout, notable surfaces/areas where an object could naturally sit",
+  "mood": "Overall mood in 3-5 words",
+  "visualStyle": "Color grading, lighting direction, warmth, contrast, saturation",
+  "keyObjects": ["every", "significant", "object", "or", "surface"],
+  "cameraWork": "Static tripod / handheld shake / slow pan / tracking / etc.",
+  "pacing": "Slow / medium / fast — describe what drives the rhythm",
+  "suggestedPlacementMoments": ["e.g. At 2.5s the desk is visible with empty space on the right", "At 4s the hand moves away revealing the table"]
+}
+
+NO markdown fences. ONLY raw JSON.`,
+        },
+      ],
+      { temperature: 0.2 },
+    );
+
+    if (!raw) return null;
+
+    const analysis = parseJsonFromLLM<VideoAnalysis>(raw);
+    if (analysis) {
+      console.log(
+        "[Gemini] ✓ Video analysis:",
+        analysis.sceneDescription.slice(0, 150),
+      );
+    }
+    return analysis;
+  } catch (err) {
+    console.error("[Gemini] Video analysis error:", err);
+    return null;
+  }
+}
+
+/* ═══════ Phase 1 fallback — Single-frame analysis (LLaVA via Fal) ═ */
+
+async function analyzeSceneFallback(
+  frameDataUrl: string,
+  falKey: string,
+): Promise<string | null> {
+  console.log("[Fal] Fallback → Analysing single frame with LLaVA …");
+  try {
+    const res = await fetch("https://fal.run/fal-ai/llavav15-13b", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${falKey}`,
+      },
+      body: JSON.stringify({
+        image_url: frameDataUrl,
+        prompt:
+          "Describe this image in detail. Focus on: the setting/environment, " +
+          "key objects and surfaces visible, and the lighting conditions.",
+      }),
+      cache: "no-store",
+    });
+
+    if (!res.ok) return null;
+    const data = (await res.json()) as { output?: string; result?: string };
+    const desc = data.output ?? data.result ?? null;
+    console.log("[Fal] Frame description:", desc);
+    return desc;
+  } catch {
+    return null;
+  }
+}
+
+/* ═══════ Phase 2 — AI Creative Director (Gemini) ═════════════════ */
+/*
+ * Given the full video understanding + product info, an AI "screenwriter"
+ * creates professional placement direction: exact prompts for inpainting
+ * and video generation that match the scene's lighting, camera, and mood.
+ */
+async function generateCreativeDirection(
+  videoAnalysis: VideoAnalysis | null,
+  frameFallbackDesc: string | null,
+  brand: string,
+  productDescription: string,
+  timestamp: number,
+  maskRegion: { x: number; y: number; w: number; h: number },
+): Promise<CreativeDirection> {
+  const sceneContext = videoAnalysis
+    ? `FULL VIDEO ANALYSIS (Gemini watched the entire video):\n${JSON.stringify(videoAnalysis, null, 2)}`
+    : frameFallbackDesc
+      ? `SINGLE FRAME DESCRIPTION:\n${frameFallbackDesc}`
+      : "No scene analysis available.";
+
+  const raw = await callGemini(
+    [
+      {
+        text: `You are an award-winning creative director who has orchestrated product placement in major films and streaming shows.
+Your placements are famous for being seamless — viewers never realise it is an ad.
+
+${sceneContext}
+
+PRODUCT TO PLACE:
+- Brand: ${brand}
+- Product: ${productDescription}
+- Target timestamp: ${timestamp}s
+- Target area (normalised 0-1): x=${maskRegion.x.toFixed(2)} y=${maskRegion.y.toFixed(2)} w=${maskRegion.w.toFixed(2)} h=${maskRegion.h.toFixed(2)}
+
+Create detailed creative direction so the product feels like it was ALWAYS part of the scene during original filming.
+
+Consider:
+- What surface does it rest on? What angle given the camera perspective?
+- What lighting hits it? From which direction? Color temperature?
+- Does it cast a shadow? Direction?
+- How would the camera's existing movement affect how the product appears in motion?
+- What is the mood and color palette — should the product look warm, cool, contrasty?
+
+Return a JSON object with EXACTLY these fields:
+{
+  "inpaintingPrompt": "Detailed prompt for AI inpainting: describe EXACTLY how the product appears — orientation, lighting, shadows, reflections, relationship to surrounding objects. Reference specific scene elements. 50-150 words.",
+  "videoMotionPrompt": "Prompt for image-to-video AI: describe subtle motion matching the original video's camera style. How light plays across the product, ambient motion. 30-80 words.",
+  "placementRationale": "2-3 sentences: WHY this placement feels natural. Mention specific scene elements.",
+  "negativePrompt": "Comma-separated list of things to AVOID: wrong lighting direction, floating, etc. Specific to THIS scene."
+}
+
+NO markdown fences. ONLY raw JSON.`,
+      },
+    ],
+    { temperature: 0.6, maxOutputTokens: 1500 },
+  );
+
+  if (raw) {
+    const cd = parseJsonFromLLM<CreativeDirection>(raw);
+    if (cd?.inpaintingPrompt && cd?.videoMotionPrompt) {
+      console.log("[Director] ✓ Creative direction generated");
+      console.log("[Director] Rationale:", cd.placementRationale);
+      return cd;
+    }
+  }
+
+  // Fallback: basic prompts when Gemini is unavailable
+  const product = productDescription
+    ? `${productDescription} by ${brand}`
+    : `a premium ${brand} product`;
+
+  const sceneHint = videoAnalysis?.sceneDescription
+    ? `In a scene: ${videoAnalysis.sceneDescription}. `
+    : frameFallbackDesc
+      ? `Scene: ${frameFallbackDesc}. `
+      : "";
+
+  return {
+    inpaintingPrompt: [
+      `${sceneHint}A photorealistic ${product} placed naturally in this scene,`,
+      "matching the lighting, shadows, perspective, and color temperature perfectly.",
+      "The product looks like it was always there. Commercial photography quality, 8k.",
+    ].join(" "),
+    videoMotionPrompt: [
+      `Smooth cinematic shot featuring ${product},`,
+      "subtle natural camera motion matching the original footage,",
+      "photorealistic, soft depth-of-field, ambient lighting.",
+    ].join(" "),
+    placementRationale:
+      "Basic product placement (Gemini unavailable for creative direction).",
+    negativePrompt:
+      "blurry, distorted, watermark, cartoon, low quality, floating, wrong perspective",
+  };
+}
+
+/* ═══════ Phase 3 — Get or generate a product image ════════════════ */
+
+async function getProductImage(input: {
+  productImageUrl?: string;
+  brand: string;
+  productDescription: string;
+}): Promise<string | null> {
+  if (input.productImageUrl && input.productImageUrl.startsWith("http")) {
+    console.log(
+      "[Pipeline] Using user-provided product image:",
+      input.productImageUrl.slice(0, 80),
+    );
+    return input.productImageUrl;
+  }
+  return generateProductImage(input.brand, input.productDescription);
+}
+
+/* ═══════ Phase 4 — Composite + harmonize (AI Director prompts) ════ */
+
+async function compositeAndHarmonize(input: {
+  frameDataUrl: string;
+  maskDataUrl?: string;
+  productImageUrl: string;
+  creativeDirection: CreativeDirection;
+  maskRegion: { x: number; y: number; w: number; h: number };
+}): Promise<string | null> {
+  const falKey = process.env.FAL_KEY;
+  if (!falKey) {
+    console.warn("[Fal] FAL_KEY missing — skipping compositing");
+    return null;
+  }
+
+  console.log("[Fal] Phase 4 → Compositing with AI Director's guidance …");
+  console.log(
+    "[Fal] Inpainting prompt:",
+    input.creativeDirection.inpaintingPrompt.slice(0, 120),
+  );
+
+  const body: Record<string, unknown> = {
+    model_name: "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
+    image_url: input.frameDataUrl,
+    prompt: input.creativeDirection.inpaintingPrompt,
+    negative_prompt: input.creativeDirection.negativePrompt,
+    num_inference_steps: 40,
+    guidance_scale: 8.5,
+    strength: 0.75,
+  };
+
+  if (input.maskDataUrl) {
+    body.mask_url = input.maskDataUrl;
+  }
+
+  try {
+    const res = await fetch("https://fal.run/fal-ai/inpaint", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${falKey}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      const errText = await res.text().catch(() => "");
+      console.error("[Fal] Inpaint error", res.status, errText);
+      return null;
+    }
+
+    const data = (await res.json()) as { image?: { url?: string } };
+    const url = data.image?.url ?? null;
+    console.log(
+      "[Fal] Composited:",
+      url ? "✓ " + url.slice(0, 80) : "✗ no image",
+    );
+    return url;
+  } catch (err) {
+    console.error("[Fal] Composite exception:", err);
+    return null;
+  }
+}
+
+/* ═══════ Phase 5 — Animate frame → video (AI Director motion) ════ */
+
+async function generateVideoFromFrame(input: {
+  imageUrl: string;
+  creativeDirection: CreativeDirection;
+}): Promise<string | null> {
+  const falKey = process.env.FAL_KEY;
+  if (!falKey) return null;
+
+  const body = {
+    image_url: input.imageUrl,
+    prompt: input.creativeDirection.videoMotionPrompt,
+    duration: "5",
+  };
+
+  // ── Attempt 1: Synchronous endpoint (blocks, max ~5 min) ──
+  console.log(
+    "[Fal] Phase 5 → Generating video with AI Director's motion script …",
+  );
+  console.log(
+    "[Fal] Motion prompt:",
+    input.creativeDirection.videoMotionPrompt.slice(0, 120),
+  );
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 5 * 60 * 1000);
+
+    const res = await fetch(
+      "https://fal.run/fal-ai/kling-video/v1/standard/image-to-video",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Key ${falKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+        cache: "no-store",
+      },
+    );
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const result = (await res.json()) as { video?: { url?: string } };
+      if (result.video?.url) {
+        console.log("[Fal] Sync video ✓:", result.video.url.slice(0, 100));
+        return result.video.url;
+      }
+      console.warn(
+        "[Fal] Sync returned OK but no video URL:",
+        JSON.stringify(result).slice(0, 300),
+      );
+    } else {
+      const errText = await res.text().catch(() => "");
+      console.warn(
+        "[Fal] Sync endpoint failed:",
+        res.status,
+        errText.slice(0, 300),
+      );
+    }
+  } catch (syncErr) {
+    if (syncErr instanceof DOMException && syncErr.name === "AbortError") {
+      console.warn("[Fal] Sync timed out — trying queue …");
+    } else {
+      console.warn("[Fal] Sync exception:", syncErr);
+    }
+  }
+
+  // ── Attempt 2: Queue endpoint (submit + poll) ──
+  console.log("[Fal] Phase 5b → Falling back to queue-based Kling …");
+  try {
+    const submitRes = await fetch(
+      "https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Key ${falKey}`,
+        },
+        body: JSON.stringify(body),
+      },
+    );
+
+    if (!submitRes.ok) {
+      console.error(
+        "[Fal] Queue submit error",
+        submitRes.status,
+        await submitRes.text().catch(() => ""),
+      );
+      return null;
+    }
+
+    const { request_id } = (await submitRes.json()) as {
+      request_id: string;
+    };
+    console.log("[Fal] Queued request:", request_id);
+
+    for (let i = 0; i < FAL_MAX_POLLS; i++) {
+      await new Promise((r) => setTimeout(r, FAL_POLL_INTERVAL));
+
+      try {
+        const statusRes = await fetch(
+          `https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video/requests/${request_id}/status`,
+          { headers: { Authorization: `Key ${falKey}` } },
+        );
+
+        if (!statusRes.ok) {
+          const errBody = await statusRes.text().catch(() => "");
+          console.warn(
+            `[Fal] Poll ${i + 1}: HTTP ${statusRes.status} — ${errBody.slice(0, 200)}`,
+          );
+          continue;
+        }
+
+        const statusData = (await statusRes.json()) as Record<
+          string,
+          unknown
+        >;
+        const status = (statusData.status as string) ?? "UNKNOWN";
+
+        if (
+          i % 3 === 0 ||
+          status === "COMPLETED" ||
+          status === "FAILED"
+        ) {
+          console.log(
+            `[Fal] Poll ${i + 1}/${FAL_MAX_POLLS}: ${status}`,
+          );
+        }
+
+        if (status === "COMPLETED") {
+          const resultRes = await fetch(
+            `https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video/requests/${request_id}`,
+            { headers: { Authorization: `Key ${falKey}` } },
+          );
+          if (!resultRes.ok) {
+            console.error(
+              "[Fal] Result fetch failed:",
+              resultRes.status,
+            );
+            return null;
+          }
+
+          const result = (await resultRes.json()) as {
+            video?: { url?: string };
+          };
+          console.log(
+            "[Fal] Video:",
+            result.video?.url
+              ? "✓ " + result.video.url.slice(0, 100)
+              : "✗ no url",
+          );
+          return result.video?.url ?? null;
+        }
+
+        if (status === "FAILED") {
+          console.error(
+            "[Fal] Video generation FAILED:",
+            JSON.stringify(statusData),
+          );
+          return null;
+        }
+      } catch (pollErr) {
+        console.warn(`[Fal] Poll ${i + 1} exception:`, pollErr);
+      }
+    }
+
+    console.error(
+      "[Fal] Video generation timed out after",
+      (FAL_MAX_POLLS * FAL_POLL_INTERVAL) / 1000,
+      "s",
+    );
+    return null;
+  } catch (err) {
+    console.error("[Fal] Video exception:", err);
+    return null;
+  }
+}
+
+/* ═══════ Fallback — text-to-image product photo (flux/schnell) ════ */
+
+async function generateProductImage(
+  brand: string,
+  productDescription: string,
+): Promise<string | null> {
+  const falKey = process.env.FAL_KEY;
+  if (!falKey) return null;
+
+  const phrase = productDescription
+    ? `${productDescription} by ${brand}`
+    : `a premium ${brand} product`;
+  const prompt = `Professional product photography: ${phrase}. Centered on a clean background, studio lighting, photorealistic, 8k. No text, no watermarks.`;
+
+  try {
+    const res = await fetch("https://fal.run/fal-ai/flux/schnell", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Key ${falKey}`,
+      },
+      body: JSON.stringify({ prompt, image_size: "square_hd", num_images: 1 }),
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { images?: { url?: string }[] };
+    return data.images?.[0]?.url ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/* ═══════════════════  Save to Supabase  ═══════════════════════════ */
+
+async function saveProcessedVideo(params: {
+  clerkUserId: string;
+  sourceVideoUrl: string;
+  processedVideoUrl: string;
+  adSlot: AdSlot;
+  promptContext: string;
+}) {
+  const supabase = getSupabaseServiceRoleClient();
+
+  const { error } = await supabase.from("videos").insert({
+    clerk_user_id: params.clerkUserId,
+    source_video_url: params.sourceVideoUrl,
+    processed_video_url: params.processedVideoUrl,
+    ad_slot: params.adSlot,
+    status: "ready",
+    prompt_context: params.promptContext,
+  });
+
+  if (error) return { savedToSupabase: false, saveError: error.message };
+  return { savedToSupabase: true as const };
+}
+
+/* ═══════════════  Main server action  ═════════════════════════════ */
+/*
+ * NEW PIPELINE (with Gemini):
+ *   Phase 1 → Gemini watches entire video → VideoAnalysis
+ *   Phase 2 → AI Creative Director writes placement script → CreativeDirection
+ *   Phase 3 → Get/generate product image
+ *   Phase 4 → SDXL inpaints with Director's specific prompt
+ *   Phase 5 → Kling animates with Director's motion script
+ *   Phase 6 → Splice into original
+ *
+ * FALLBACK (without Gemini):
+ *   Phase 1 → LLaVA analyses single frame
+ *   Phase 2 → Generic placement prompts
+ *   ...rest same
+ */
+export async function processVideoAction(
+  input: ProcessVideoInput,
+): Promise<ProcessVideoResult> {
+  const { userId } = await auth();
+  if (!userId) throw new Error("You must be signed in.");
+  if (!input.sourceVideoUrl) throw new Error("Video URL is required.");
+
+  const timestamp = input.timestamp ?? DEFAULT_TIMESTAMP;
+  const maskRegion = input.maskRegion ?? { x: 0.35, y: 0.2, w: 0.3, h: 0.5 };
+  let compositedFrameUrl: string | null = null;
+  let generatedVideoUrl: string | null = null;
+  let productImageForBubble: string | null = null;
+  let videoAnalysis: VideoAnalysis | null = null;
+  let creativeDirection: CreativeDirection | null = null;
+  const pipelineSteps: string[] = [];
+
+  const falKey = process.env.FAL_KEY;
+
+  /* ── Phase 1: VIDEO UNDERSTANDING ── */
+  // Gemini watches the ENTIRE video (not just one frame)
+  videoAnalysis = await analyzeVideoWithGemini(input.sourceVideoUrl);
+  pipelineSteps.push(
+    videoAnalysis ? "video-analysed-gemini" : "video-analysis-skipped",
+  );
+
+  // Fallback: single-frame analysis with LLaVA when Gemini is unavailable
+  let frameFallbackDesc: string | null = null;
+  if (!videoAnalysis && input.frameDataUrl && falKey) {
+    frameFallbackDesc = await analyzeSceneFallback(
+      input.frameDataUrl,
+      falKey,
+    );
+    pipelineSteps.push(
+      frameFallbackDesc ? "frame-analysed-llava" : "frame-analysis-skipped",
+    );
+  }
+
+  /* ── Phase 2: AI CREATIVE DIRECTOR ── */
+  // The "screenwriter" — given the full video context + product info,
+  // writes professional placement direction for the downstream AI tools.
+  creativeDirection = await generateCreativeDirection(
+    videoAnalysis,
+    frameFallbackDesc,
+    input.brand,
+    input.productDescription,
+    timestamp,
+    maskRegion,
+  );
+  pipelineSteps.push(
+    creativeDirection.placementRationale.includes("unavailable")
+      ? "direction-fallback"
+      : "direction-generated",
+  );
+
+  if (input.frameDataUrl) {
+    /* ── Phase 3: PRODUCT IMAGE ── */
+    productImageForBubble = await getProductImage({
+      productImageUrl: input.productImageUrl,
+      brand: input.brand,
+      productDescription: input.productDescription,
+    });
+    pipelineSteps.push(
+      productImageForBubble ? "product-image-ready" : "product-image-failed",
+    );
+    console.log(
+      "[Pipeline] Product image:",
+      productImageForBubble ? "✓" : "✗",
+    );
+
+    /* ── Phase 4: COMPOSITE + HARMONIZE ── */
+    // Now using the AI Director's specific inpainting prompt
+    compositedFrameUrl = await compositeAndHarmonize({
+      frameDataUrl: input.frameDataUrl,
+      maskDataUrl: input.maskDataUrl,
+      productImageUrl: productImageForBubble || "",
+      creativeDirection,
+      maskRegion,
+    });
+    pipelineSteps.push(
+      compositedFrameUrl ? "composite-done" : "composite-failed",
+    );
+
+    /* ── Phase 5: VIDEO GENERATION ── */
+    // Now using the AI Director's motion/camera script
+    if (compositedFrameUrl) {
+      generatedVideoUrl = await generateVideoFromFrame({
+        imageUrl: compositedFrameUrl,
+        creativeDirection,
+      });
+      pipelineSteps.push(
+        generatedVideoUrl ? "video-generated" : "video-failed",
+      );
+    }
+  }
+
+  /* ── Bubble product image ── */
+  let bubbleImageUrl = productImageForBubble;
+  if (!bubbleImageUrl) {
+    bubbleImageUrl = await generateProductImage(
+      input.brand,
+      input.productDescription,
+    );
+  }
+
+  const processedVideoUrl = generatedVideoUrl || input.sourceVideoUrl;
+
+  const adSlot: AdSlot = {
+    timestamp,
+    productName: `${input.brand} Featured Product`,
+    productImageUrl:
+      bubbleImageUrl || input.productImageUrl || DEFAULT_PRODUCT_IMAGE,
+    buyUrl: input.buyUrl || "https://stripe.com",
+    placement: { x: maskRegion.x + maskRegion.w / 2, y: maskRegion.y },
+  };
+
+  const saveResult = await saveProcessedVideo({
+    clerkUserId: userId,
+    sourceVideoUrl: input.sourceVideoUrl,
+    processedVideoUrl,
+    adSlot,
+    promptContext: `[${input.brand}] ${input.productDescription}`,
+  });
+
+  return {
+    status: "ready",
+    originalVideoUrl: input.sourceVideoUrl,
+    aiClipUrl: generatedVideoUrl,
+    inpaintedFrameUrl: compositedFrameUrl,
+    processedVideoUrl,
+    adSlot,
+    insertAtTimestamp: timestamp,
+    pipelineSteps,
+    savedToSupabase: saveResult.savedToSupabase,
+    saveError: "saveError" in saveResult ? saveResult.saveError : undefined,
+    videoAnalysis,
+    creativeDirection,
+  };
+}

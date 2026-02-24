@@ -3,42 +3,62 @@
 import { auth } from "@clerk/nextjs/server";
 import type { AdSlot } from "@/components/VibePlayer";
 import { getSupabaseServiceRoleClient } from "@/lib/supabase";
+import { deflateSync } from "zlib";
+import { fal } from "@fal-ai/client";
 
 /* ═══════════════════════════  Types  ═══════════════════════════════ */
 
+/** A single sampled frame from the video (extracted client-side) */
+type FrameSample = {
+  dataUrl: string;
+  timestamp: number;
+  width: number;
+  height: number;
+};
+
 type ProcessVideoInput = {
   sourceVideoUrl: string;
-  brand: string;
+  brand?: string;
   productDescription: string;
   buyUrl?: string;
-  productImageUrl?: string;
-  /** base64 data-URL of the extracted video frame (JPEG) */
-  frameDataUrl?: string;
-  /** base64 data-URL of the inpainting mask (PNG, white=inpaint area) */
-  maskDataUrl?: string;
-  /** user-chosen timestamp in the video to place the product */
-  timestamp?: number;
-  /** user-drawn mask region (0-1 normalised coordinates) */
-  maskRegion?: { x: number; y: number; w: number; h: number };
+  productImageUrl: string;
+  /** Multiple frames sampled across the video for the AI Director to choose from */
+  frameSamples?: FrameSample[];
+};
+
+/** The AI Director's full decision — placement, creative direction, everything */
+export type DirectorDecision = {
+  /** Which frame index (0-based) the Director chose */
+  chosenFrameIndex: number;
+  /** The timestamp (seconds) of the chosen frame */
+  chosenTimestamp: number;
+  /** Where to place the product (normalised 0-1) */
+  maskRegion: { x: number; y: number; w: number; h: number };
+  /** Scene analysis */
+  sceneDescription: string;
+  /** Why this moment + position was chosen */
+  placementRationale: string;
+  /** Detailed prompt for SDXL inpainting */
+  inpaintingPrompt: string;
+  /** Prompt for Kling image-to-video */
+  videoMotionPrompt: string;
+  /** Things to avoid in generation */
+  negativePrompt: string;
 };
 
 export type ProcessVideoResult = {
   status: "ready";
-  /** The original source video URL (always returned for splicing) */
   originalVideoUrl: string;
-  /** URL of the AI-generated clip with the product placed in it (null if pipeline failed) */
   aiClipUrl: string | null;
-  /** The composited/inpainted frame image URL */
   inpaintedFrameUrl: string | null;
-  /** Legacy — kept for fallback; equals aiClipUrl or originalVideoUrl */
   processedVideoUrl: string;
   adSlot: AdSlot;
-  /** The timestamp at which the AI clip should be inserted */
   insertAtTimestamp: number;
-  /** Progress step the server finished on (for client logging) */
   pipelineSteps: string[];
   savedToSupabase: boolean;
   saveError?: string;
+  /** The AI Director's full decision (shown in UI) */
+  directorDecision?: DirectorDecision | null;
 };
 
 /* ═══════════════════════════  Constants  ═══════════════════════════ */
@@ -46,16 +66,238 @@ export type ProcessVideoResult = {
 const DEFAULT_TIMESTAMP = 3;
 const DEFAULT_PRODUCT_IMAGE =
   "https://images.unsplash.com/photo-1523362628745-0c100150b504?auto=format&fit=crop&w=400&q=80";
-const FAL_POLL_INTERVAL = 5_000;
-const FAL_MAX_POLLS = 120; // 120 × 5 s = 10 min max wait
 
-/* ═══════ Step 0 — Analyse the frame to understand the scene ═══════ */
+/* ═══════════════  OpenAI helper  ══════════════════════════════════ */
 
-async function analyzeScene(
+function getOpenAIKey(): string | null {
+  // Support both common env var casings
+  return process.env.OPENAI_API_KEY || process.env.OpenAI_API_KEY || null;
+}
+
+type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string | Array<{ type: string; text?: string; image_url?: { url: string; detail?: string } }>;
+};
+
+async function callOpenAI(
+  messages: ChatMessage[],
+  config?: { temperature?: number; maxTokens?: number; jsonMode?: boolean },
+): Promise<string | null> {
+  const key = getOpenAIKey();
+  if (!key) {
+    console.warn("[OpenAI] No API key found (checked OPENAI_API_KEY and OpenAI_API_KEY)");
+    return null;
+  }
+
+  try {
+    const body: Record<string, unknown> = {
+      model: "gpt-4o",
+      messages,
+      temperature: config?.temperature ?? 0.4,
+      max_tokens: config?.maxTokens ?? 2000,
+    };
+    if (config?.jsonMode) {
+      body.response_format = { type: "json_object" };
+    }
+
+    const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const err = await res.text().catch(() => "");
+      console.warn("[OpenAI]", res.status, err.slice(0, 400));
+      return null;
+    }
+
+    const data = (await res.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    return data.choices?.[0]?.message?.content ?? null;
+  } catch (err) {
+    console.warn("[OpenAI] Exception:", err);
+    return null;
+  }
+}
+
+function parseJsonFromLLM<T>(raw: string): T | null {
+  try {
+    const cleaned = raw
+      .replace(/```json\s*/gi, "")
+      .replace(/```\s*/g, "")
+      .trim();
+    return JSON.parse(cleaned) as T;
+  } catch {
+    return null;
+  }
+}
+
+/* ═══════ Phase 1+2 — AI Director (GPT-4o Vision) ═════════════════ */
+/*
+ * ONE call does EVERYTHING:
+ * - Analyses all sampled frames from the video
+ * - Picks the BEST moment for product placement
+ * - Decides WHERE in the frame to place it
+ * - Writes specific inpainting + video motion prompts
+ *
+ * This replaces the old Gemini video analysis + separate creative direction.
+ */
+async function runAIDirector(
+  frameSamples: FrameSample[],
+  brand: string,
+  productDescription: string,
+  referenceVisualSpec?: string,
+): Promise<DirectorDecision | null> {
+  if (!getOpenAIKey()) {
+    console.log("[Director] No OpenAI key — skipping AI direction");
+    return null;
+  }
+
+  console.log(`[Director] Analysing ${frameSamples.length} frames with GPT-4o …`);
+
+  // Build the multi-image message
+  const imageContent: Array<{ type: string; text?: string; image_url?: { url: string; detail?: string } }> = [];
+
+  // Add each frame as an image
+  for (let i = 0; i < frameSamples.length; i++) {
+    imageContent.push({
+      type: "image_url",
+      image_url: {
+        url: frameSamples[i].dataUrl,
+        detail: "low", // cheaper + faster, good enough for scene analysis
+      },
+    });
+  }
+
+  // Build the timestamp reference
+  const frameList = frameSamples
+    .map((f, i) => `  Frame ${i}: timestamp ${f.timestamp.toFixed(1)}s`)
+    .join("\n");
+
+  // Add the text prompt
+  imageContent.push({
+    type: "text",
+    text: `You are an award-winning creative director for product placement in film and TV.
+You are looking at ${frameSamples.length} frames sampled from a video, shown above in order.
+
+${frameList}
+
+PRODUCT TO PLACE:
+- Brand: ${brand}
+- Product: ${productDescription}
+${referenceVisualSpec ? `- Reference visual specification: ${referenceVisualSpec}` : ""}
+
+YOUR JOB: Pick the SINGLE BEST frame for natural product placement and create the full creative direction.
+
+Think like a Hollywood ad executive:
+- Which frame has a natural surface, empty space, or logical place for this product?
+- Avoid frames where hands/faces/action would be obstructed
+- Prefer moments with stable composition (less motion blur)
+- Consider lighting direction — the product needs to match it
+- The product should feel like it was ALWAYS in the scene during filming
+
+Return a JSON object with EXACTLY these fields:
+{
+  "chosenFrameIndex": 0,
+  "chosenTimestamp": 0.0,
+  "maskRegion": { "x": 0.0, "y": 0.0, "w": 0.0, "h": 0.0 },
+  "sceneDescription": "What is happening in this video — environment, objects, surfaces, lighting, mood. 2-3 sentences.",
+  "placementRationale": "WHY you chose this exact frame and position. What surface does it sit on? How does the lighting work? 2-3 sentences.",
+  "inpaintingPrompt": "Detailed prompt for AI image inpainting. Describe EXACTLY how the product appears: orientation, lighting angle, shadows, reflections, color temperature, relationship to nearby objects. Reference specific scene elements. 50-150 words.",
+  "videoMotionPrompt": "Prompt for image-to-video AI. Describe subtle motion: camera sway matching original footage, how light plays on the product, ambient motion around it. Keep the product stable and grounded. 30-80 words.",
+  "negativePrompt": "Comma-separated list of things to AVOID, specific to this scene: wrong lighting, floating, wrong scale, etc."
+}
+
+RULES FOR maskRegion (normalised 0-1 coordinates):
+- x,y = top-left corner of the placement box
+- w,h = width and height of the box
+- The box must be on a visible SURFACE (table, desk, floor, shelf, counter)
+- Size should be realistic for the product (not too large, not tiny)
+- Typical product placement: w=0.15-0.25, h=0.20-0.35
+
+Return ONLY valid JSON. No markdown fences.`,
+  });
+
+  const raw = await callOpenAI(
+    [
+      {
+        role: "system",
+        content: "You are a professional product placement creative director. Always respond with valid JSON only.",
+      },
+      { role: "user", content: imageContent },
+    ],
+    { temperature: 0.4, maxTokens: 1500, jsonMode: true },
+  );
+
+  if (!raw) return null;
+
+  const decision = parseJsonFromLLM<DirectorDecision>(raw);
+  if (decision?.inpaintingPrompt && decision?.videoMotionPrompt) {
+    // Validate frame index
+    if (decision.chosenFrameIndex < 0 || decision.chosenFrameIndex >= frameSamples.length) {
+      decision.chosenFrameIndex = 0;
+    }
+    decision.chosenTimestamp = frameSamples[decision.chosenFrameIndex].timestamp;
+
+    console.log("[Director] ✓ Chose frame", decision.chosenFrameIndex, "at", decision.chosenTimestamp.toFixed(1) + "s");
+    console.log("[Director] Rationale:", decision.placementRationale);
+    console.log("[Director] Region:", JSON.stringify(decision.maskRegion));
+    return decision;
+  }
+
+  console.warn("[Director] Failed to parse GPT-4o response:", raw.slice(0, 200));
+  return null;
+}
+
+async function analyzeReferenceProductImage(
+  productImageUrl: string,
+  productDescription: string,
+): Promise<string | null> {
+  if (!getOpenAIKey()) return null;
+
+  const raw = await callOpenAI(
+    [
+      {
+        role: "system",
+        content: "You are a product visual analyst. Return concise, objective visual descriptors.",
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "Analyze this reference product image for image generation. Return 1 concise paragraph (max 80 words) describing exact packaging geometry, colors, logo/label placement, materials, finish (matte/glossy), and recognizable brand marks. Avoid guessing hidden details. Product context: " +
+              productDescription,
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: productImageUrl,
+              detail: "high",
+            },
+          },
+        ],
+      },
+    ],
+    { temperature: 0.2, maxTokens: 250 },
+  );
+
+  return raw?.trim() || null;
+}
+
+/* ═══════ Fallback — LLaVA frame analysis (when OpenAI unavailable) */
+
+async function analyzeSceneFallback(
   frameDataUrl: string,
   falKey: string,
 ): Promise<string | null> {
-  console.log("[Fal] Step 0 → Analysing scene for natural placement …");
+  console.log("[Fal] Fallback → Analysing single frame with LLaVA …");
   try {
     const res = await fetch("https://fal.run/fal-ai/llavav15-13b", {
       method: "POST",
@@ -66,55 +308,27 @@ async function analyzeScene(
       body: JSON.stringify({
         image_url: frameDataUrl,
         prompt:
-          "Describe this image in one concise sentence. Focus on: the setting/environment, " +
-          "key objects and surfaces visible (tables, desks, shelves, floors, hands, walls), " +
-          "and the lighting conditions (warm, cool, natural, artificial, directional).",
+          "Describe this image in detail. Focus on: the setting/environment, " +
+          "key objects and surfaces visible, lighting conditions, and any " +
+          "empty surfaces where a product could naturally be placed.",
       }),
       cache: "no-store",
     });
 
-    if (!res.ok) {
-      console.warn("[Fal] Scene analysis failed:", res.status);
-      return null;
-    }
-
+    if (!res.ok) return null;
     const data = (await res.json()) as { output?: string; result?: string };
-    const description = data.output ?? data.result ?? null;
-    console.log("[Fal] Scene description:", description);
-    return description;
-  } catch (err) {
-    console.warn("[Fal] Scene analysis exception:", err);
+    return data.output ?? data.result ?? null;
+  } catch {
     return null;
   }
 }
 
-/* ═══════ Step 1 — Get or generate a product image ═════════════════ */
-
-async function getProductImage(input: {
-  productImageUrl?: string;
-  brand: string;
-  productDescription: string;
-}): Promise<string | null> {
-  // If user provided a product image URL, use it directly
-  if (input.productImageUrl && input.productImageUrl.startsWith("http")) {
-    console.log("[Pipeline] Using user-provided product image:", input.productImageUrl.slice(0, 80));
-    return input.productImageUrl;
-  }
-
-  // Otherwise generate one with flux/schnell
-  return generateProductImage(input.brand, input.productDescription);
-}
-
-/* ═══════ Step 2 — Composite product onto frame + harmonize ════════ */
+/* ═══════ Phase 4 — Composite + harmonize (Director's prompts) ═════ */
 
 async function compositeAndHarmonize(input: {
   frameDataUrl: string;
-  maskDataUrl?: string;
-  productImageUrl: string;
-  brand: string;
-  productDescription: string;
-  sceneDescription?: string | null;
-  maskRegion: { x: number; y: number; w: number; h: number };
+  maskDataUrl: string;
+  creativeDirection: { inpaintingPrompt: string; negativePrompt: string };
 }): Promise<string | null> {
   const falKey = process.env.FAL_KEY;
   if (!falKey) {
@@ -122,43 +336,19 @@ async function compositeAndHarmonize(input: {
     return null;
   }
 
-  const product = input.productDescription
-    ? `${input.productDescription} by ${input.brand}`
-    : `a premium ${input.brand} product`;
+  console.log("[Fal] Phase 4 → Compositing with Director's guidance …");
+  console.log("[Fal] Prompt:", input.creativeDirection.inpaintingPrompt.slice(0, 120));
 
-  // Build a context-aware prompt focused on harmonizing the composited product
-  const sceneContext = input.sceneDescription
-    ? `Scene context: ${input.sceneDescription}. `
-    : "";
-
-  const prompt = [
-    `${sceneContext}A photorealistic ${product} sitting naturally in this scene,`,
-    "perfectly matching the existing lighting, shadows, perspective, and color temperature.",
-    "The product looks like it belongs there, with natural reflections and contact shadows.",
-    "Commercial product photography quality, 8k resolution, photorealistic.",
-  ].join(" ");
-
-  console.log("[Fal] Step 2 → Compositing product onto frame with harmonization …");
-
-  // Use inpainting with the product image composited into the frame.
-  // We use strength 0.65 — enough to blend lighting/shadows but
-  // low enough that the actual product remains recognisable.
   const body: Record<string, unknown> = {
     model_name: "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
     image_url: input.frameDataUrl,
-    prompt,
-    negative_prompt:
-      "blurry, distorted, text, watermark, cartoon, low quality, unrealistic, " +
-      "different product, wrong product, no product, empty, " +
-      "floating, flying, wrong perspective, unnatural shadows",
+    mask_url: input.maskDataUrl,
+    prompt: input.creativeDirection.inpaintingPrompt,
+    negative_prompt: input.creativeDirection.negativePrompt,
     num_inference_steps: 40,
     guidance_scale: 8.5,
     strength: 0.75,
   };
-
-  if (input.maskDataUrl) {
-    body.mask_url = input.maskDataUrl;
-  }
 
   try {
     const res = await fetch("https://fal.run/fal-ai/inpaint", {
@@ -187,169 +377,157 @@ async function compositeAndHarmonize(input: {
   }
 }
 
-/* ═══════ Step 2 — Animate inpainted frame → video (Kling i2v) ═════ */
+/* ═══════ Phase 5 — Animate frame → video (Director's motion) ══════ */
 
 async function generateVideoFromFrame(input: {
   imageUrl: string;
-  brand: string;
-  productDescription: string;
+  motionPrompt: string;
 }): Promise<string | null> {
   const falKey = process.env.FAL_KEY;
   if (!falKey) return null;
 
-  const prompt = [
-    `Smooth cinematic shot featuring ${input.productDescription} by ${input.brand},`,
-    "subtle natural camera sway, photorealistic, commercial film grain,",
-    "soft depth-of-field, ambient lighting, 24 fps.",
-  ].join(" ");
+  // Configure the fal client with our API key
+  fal.config({ credentials: falKey });
 
-  const body = {
-    image_url: input.imageUrl,
-    prompt,
-    duration: "5",
-  };
+  console.log("[Fal] Phase 5 → Generating video with Kling (fal.subscribe) …");
+  console.log("[Fal] Motion prompt:", input.motionPrompt.slice(0, 120));
 
-  // ── Attempt 1: Synchronous endpoint (blocks until done, max ~5 min) ──
-  console.log("[Fal] Step 2 → Trying synchronous image-to-video (Kling) …");
   try {
-    const controller = new AbortController();
-    const syncTimeout = setTimeout(() => controller.abort(), 5 * 60 * 1000); // 5 min
-
-    const syncRes = await fetch(
-      "https://fal.run/fal-ai/kling-video/v1/standard/image-to-video",
+    const result = await fal.subscribe(
+      "fal-ai/kling-video/v1/standard/image-to-video",
       {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Key ${falKey}`,
+        input: {
+          image_url: input.imageUrl,
+          prompt: input.motionPrompt,
+          duration: "5",
         },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-        cache: "no-store",
-      },
-    );
-    clearTimeout(syncTimeout);
-
-    if (syncRes.ok) {
-      const result = (await syncRes.json()) as { video?: { url?: string } };
-      if (result.video?.url) {
-        console.log("[Fal] Sync video ✓:", result.video.url.slice(0, 100));
-        return result.video.url;
-      }
-      console.warn("[Fal] Sync returned OK but no video URL:", JSON.stringify(result).slice(0, 300));
-    } else {
-      const errText = await syncRes.text().catch(() => "");
-      console.warn("[Fal] Sync endpoint failed:", syncRes.status, errText.slice(0, 300));
-    }
-  } catch (syncErr) {
-    if (syncErr instanceof DOMException && syncErr.name === "AbortError") {
-      console.warn("[Fal] Sync endpoint timed out after 5 min — trying queue …");
-    } else {
-      console.warn("[Fal] Sync exception:", syncErr);
-    }
-  }
-
-  // ── Attempt 2: Queue endpoint (submit + poll) ──
-  console.log("[Fal] Step 2b → Falling back to queue-based Kling …");
-  try {
-    const submitRes = await fetch(
-      "https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Key ${falKey}`,
+        logs: true,
+        pollInterval: 5000,
+        timeout: 480_000, // 8 minute hard timeout
+        onQueueUpdate: (update) => {
+          console.log(`[Fal] Queue: ${update.status}${
+            "position" in update ? ` (pos ${(update as Record<string, unknown>).position})` : ""
+          }`);
         },
-        body: JSON.stringify(body),
       },
     );
 
-    if (!submitRes.ok) {
-      console.error("[Fal] Queue submit error", submitRes.status, await submitRes.text().catch(() => ""));
-      return null;
+    const data = result.data as { video?: { url?: string } };
+    if (data?.video?.url) {
+      console.log("[Fal] Video ✓:", data.video.url.slice(0, 100));
+      return data.video.url;
     }
 
-    const { request_id } = (await submitRes.json()) as { request_id: string };
-    console.log("[Fal] Queued request:", request_id);
-
-    // ── Poll until done ──
-    for (let i = 0; i < FAL_MAX_POLLS; i++) {
-      await new Promise((r) => setTimeout(r, FAL_POLL_INTERVAL));
-
-      try {
-        const statusRes = await fetch(
-          `https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video/requests/${request_id}/status`,
-          { headers: { Authorization: `Key ${falKey}` } },
-        );
-
-        if (!statusRes.ok) {
-          const errBody = await statusRes.text().catch(() => "");
-          console.warn(`[Fal] Poll ${i + 1}: HTTP ${statusRes.status} — ${errBody.slice(0, 200)}`);
-          continue;
-        }
-
-        const statusData = (await statusRes.json()) as Record<string, unknown>;
-        const status = (statusData.status as string) ?? "UNKNOWN";
-
-        // Log frequently so we can see progress
-        if (i % 3 === 0 || status === "COMPLETED" || status === "FAILED") {
-          console.log(`[Fal] Poll ${i + 1}/${FAL_MAX_POLLS}: ${status}`);
-        }
-
-        if (status === "COMPLETED") {
-          const resultRes = await fetch(
-            `https://queue.fal.run/fal-ai/kling-video/v1/standard/image-to-video/requests/${request_id}`,
-            { headers: { Authorization: `Key ${falKey}` } },
-          );
-          if (!resultRes.ok) {
-            console.error("[Fal] Result fetch failed:", resultRes.status);
-            return null;
-          }
-
-          const result = (await resultRes.json()) as { video?: { url?: string } };
-          console.log("[Fal] Video:", result.video?.url ? "✓ " + result.video.url.slice(0, 100) : "✗ no url");
-          return result.video?.url ?? null;
-        }
-
-        if (status === "FAILED") {
-          console.error("[Fal] Video generation FAILED:", JSON.stringify(statusData));
-          return null;
-        }
-      } catch (pollErr) {
-        console.warn(`[Fal] Poll ${i + 1} exception:`, pollErr);
-      }
-    }
-
-    console.error("[Fal] Video generation timed out after", FAL_MAX_POLLS * FAL_POLL_INTERVAL / 1000, "s");
+    console.warn("[Fal] Subscribe completed but no video URL:", JSON.stringify(data).slice(0, 300));
     return null;
   } catch (err) {
-    console.error("[Fal] Video exception:", err);
-    return null;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[Fal] Video generation error:", msg);
+    // Re-throw with a user-friendly message so UI can display it
+    throw new Error(`Video generation failed: ${msg.slice(0, 200)}`);
   }
 }
 
-/* ═══════ Fallback — text-to-image product photo (flux/schnell) ════ */
+/* ═══════ Mask generation (server-side via base64 canvas trick) ═════ */
+/*
+ * Generates a mask PNG data URL with a white rectangle on a black canvas.
+ * This runs server-side — no DOM Canvas needed (uses raw PNG bytes).
+ */
+function generateMaskPng(
+  width: number,
+  height: number,
+  region: { x: number; y: number; w: number; h: number },
+): string {
+  // Build a simple uncompressed PNG with raw RGBA pixels
+  const w = Math.min(width, 512);
+  const h = Math.min(height, 512);
 
-async function generateProductImage(brand: string, productDescription: string): Promise<string | null> {
-  const falKey = process.env.FAL_KEY;
-  if (!falKey) return null;
+  const rx = Math.round(region.x * w);
+  const ry = Math.round(region.y * h);
+  const rw = Math.round(region.w * w);
+  const rh = Math.round(region.h * h);
 
-  const phrase = productDescription ? `${productDescription} by ${brand}` : `a premium ${brand} product`;
-  const prompt = `Professional product photography: ${phrase}. Centered on a clean background, studio lighting, photorealistic, 8k. No text, no watermarks.`;
+  // Create raw pixel buffer (RGBA)
+  const pixels = Buffer.alloc(w * h * 4, 0); // all black, alpha=0
 
-  try {
-    const res = await fetch("https://fal.run/fal-ai/flux/schnell", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Key ${falKey}` },
-      body: JSON.stringify({ prompt, image_size: "square_hd", num_images: 1 }),
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const data = (await res.json()) as { images?: { url?: string }[] };
-    return data.images?.[0]?.url ?? null;
-  } catch {
-    return null;
+  for (let py = 0; py < h; py++) {
+    for (let px = 0; px < w; px++) {
+      const idx = (py * w + px) * 4;
+      if (px >= rx && px < rx + rw && py >= ry && py < ry + rh) {
+        // White (inpaint area)
+        pixels[idx] = 255;
+        pixels[idx + 1] = 255;
+        pixels[idx + 2] = 255;
+        pixels[idx + 3] = 255;
+      } else {
+        // Black (keep area)
+        pixels[idx] = 0;
+        pixels[idx + 1] = 0;
+        pixels[idx + 2] = 0;
+        pixels[idx + 3] = 255;
+      }
+    }
   }
+
+  // Build PNG file manually (uncompressed IDAT with zlib stored blocks)
+
+  // PNG signature
+  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+
+  // IHDR chunk
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 6; // color type (RGBA)
+  ihdr[10] = 0; // compression
+  ihdr[11] = 0; // filter
+  ihdr[12] = 0; // interlace
+
+  // Add filter bytes (0 = none) before each row
+  const rawData = Buffer.alloc(h * (1 + w * 4));
+  for (let y = 0; y < h; y++) {
+    rawData[y * (1 + w * 4)] = 0; // filter byte
+    pixels.copy(rawData, y * (1 + w * 4) + 1, y * w * 4, (y + 1) * w * 4);
+  }
+
+  const compressed = deflateSync(rawData);
+
+  // Build chunks
+  function makeChunk(type: string, data: Buffer): Buffer {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length, 0);
+    const typeB = Buffer.from(type, "ascii");
+    const crcData = Buffer.concat([typeB, data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(crcData), 0);
+    return Buffer.concat([len, typeB, data, crc]);
+  }
+
+  function crc32(buf: Buffer): number {
+    let c = 0xffffffff;
+    for (let i = 0; i < buf.length; i++) {
+      c = crcTable[(c ^ buf[i]) & 0xff] ^ (c >>> 8);
+    }
+    return (c ^ 0xffffffff) >>> 0;
+  }
+
+  // CRC table
+  const crcTable: number[] = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    crcTable[n] = c;
+  }
+
+  const ihdrChunk = makeChunk("IHDR", ihdr);
+  const idatChunk = makeChunk("IDAT", compressed);
+  const iendChunk = makeChunk("IEND", Buffer.alloc(0));
+
+  const png = Buffer.concat([signature, ihdrChunk, idatChunk, iendChunk]);
+  return `data:image/png;base64,${png.toString("base64")}`;
 }
 
 /* ═══════════════════  Save to Supabase  ═══════════════════════════ */
@@ -376,76 +554,126 @@ async function saveProcessedVideo(params: {
   return { savedToSupabase: true as const };
 }
 
-/* ═══════════════════  Main server action  ═════════════════════════ */
-
+/* ═══════════════  Main server action  ═════════════════════════════ */
+/*
+ * NEW PIPELINE — Director decides everything:
+ *   Phase 1+2 → GPT-4o Vision analyses all frames, picks best moment,
+ *               decides mask region, writes creative direction
+ *   Phase 3   → Get/generate product image
+ *   Phase 4   → SDXL inpaints with Director's prompt at Director's chosen frame
+ *   Phase 5   → Kling animates with Director's motion script
+ *   Phase 6   → Splice into original
+ */
 export async function processVideoAction(
   input: ProcessVideoInput,
 ): Promise<ProcessVideoResult> {
   const { userId } = await auth();
   if (!userId) throw new Error("You must be signed in.");
   if (!input.sourceVideoUrl) throw new Error("Video URL is required.");
+  if (!input.productDescription?.trim()) {
+    throw new Error("Product description is required — the AI Director needs to know what to place.");
+  }
+  if (!input.productImageUrl?.trim()) {
+    throw new Error("Reference product image is required for exact visual fidelity.");
+  }
 
-  const timestamp = input.timestamp ?? DEFAULT_TIMESTAMP;
-  const maskRegion = input.maskRegion ?? { x: 0.35, y: 0.2, w: 0.3, h: 0.5 };
   let compositedFrameUrl: string | null = null;
   let generatedVideoUrl: string | null = null;
+  let directorDecision: DirectorDecision | null = null;
   const pipelineSteps: string[] = [];
+  const falKey = process.env.FAL_KEY;
 
-  /* ── New pipeline: analyse → get product image → composite + harmonize → video ── */
-  if (input.frameDataUrl) {
-    const falKey = process.env.FAL_KEY;
+  // Extract brand from description if not provided separately
+  const brand = input.brand || "";
+  const referenceVisualSpec = await analyzeReferenceProductImage(
+    input.productImageUrl,
+    input.productDescription,
+  );
+  pipelineSteps.push(referenceVisualSpec ? "reference-image-analyzed" : "reference-analysis-failed");
 
-    // Step 0: Analyse the scene
-    let sceneDescription: string | null = null;
-    if (falKey) {
-      sceneDescription = await analyzeScene(input.frameDataUrl, falKey);
-      pipelineSteps.push(sceneDescription ? "scene-analysed" : "scene-analysis-skipped");
+  const hasFrames = input.frameSamples && input.frameSamples.length > 0;
+
+  /* ── Phase 1+2: AI DIRECTOR (GPT-4o Vision) ── */
+  if (hasFrames) {
+    directorDecision = await runAIDirector(
+      input.frameSamples!,
+      brand,
+      input.productDescription,
+      referenceVisualSpec ?? undefined,
+    );
+    pipelineSteps.push(directorDecision ? "director-decided" : "director-failed");
+
+    if (directorDecision) {
+      console.log("[Pipeline] Director chose frame", directorDecision.chosenFrameIndex,
+        "at", directorDecision.chosenTimestamp.toFixed(1) + "s");
     }
+  }
 
-    // Step 1: Get a product image (user-provided or AI-generated)
-    const productImageUrl = await getProductImage({
-      productImageUrl: input.productImageUrl,
-      brand: input.brand,
-      productDescription: input.productDescription,
-    });
-    pipelineSteps.push(productImageUrl ? "product-image-ready" : "product-image-failed");
-    console.log("[Pipeline] Product image:", productImageUrl ? "✓" : "✗");
+  // Fallback: LLaVA on first frame if GPT-4o unavailable
+  let fallbackDesc: string | null = null;
+  if (!directorDecision && hasFrames && falKey) {
+    fallbackDesc = await analyzeSceneFallback(input.frameSamples![0].dataUrl, falKey);
+    pipelineSteps.push(fallbackDesc ? "llava-fallback" : "llava-failed");
+  }
 
-    // Step 2: Composite the product onto the frame + harmonize with inpainting
+  // Determine which frame and region to use
+  const chosenFrame = directorDecision && hasFrames
+    ? input.frameSamples![directorDecision.chosenFrameIndex]
+    : hasFrames
+      ? input.frameSamples![0]
+      : null;
+
+  const chosenTimestamp = directorDecision?.chosenTimestamp ?? DEFAULT_TIMESTAMP;
+  const maskRegion = directorDecision?.maskRegion ?? { x: 0.35, y: 0.2, w: 0.3, h: 0.5 };
+
+  if (chosenFrame) {
+    /* ── Phase 4: COMPOSITE + HARMONIZE ── */
+    // Generate mask from Director's chosen region
+    const maskDataUrl = generateMaskPng(chosenFrame.width, chosenFrame.height, maskRegion);
+
+    // Build inpainting prompt (Director's or fallback)
+    const inpaintingPrompt = directorDecision?.inpaintingPrompt ??
+      buildFallbackInpaintingPrompt(fallbackDesc, brand, input.productDescription);
+    const fidelityPrompt = referenceVisualSpec
+      ? `${inpaintingPrompt}\n\nMANDATORY VISUAL FIDELITY: match this exact reference product appearance — ${referenceVisualSpec}`
+      : inpaintingPrompt;
+    const negativePrompt = directorDecision?.negativePrompt ??
+      "blurry, distorted, watermark, cartoon, low quality, floating, wrong perspective";
+
     compositedFrameUrl = await compositeAndHarmonize({
-      frameDataUrl: input.frameDataUrl,
-      maskDataUrl: input.maskDataUrl,
-      productImageUrl: productImageUrl || "",
-      brand: input.brand,
-      productDescription: input.productDescription,
-      sceneDescription,
-      maskRegion,
+      frameDataUrl: chosenFrame.dataUrl,
+      maskDataUrl,
+      creativeDirection: { inpaintingPrompt: fidelityPrompt, negativePrompt },
     });
     pipelineSteps.push(compositedFrameUrl ? "composite-done" : "composite-failed");
 
-    // Step 3: Turn the composited frame into a video clip
+    /* ── Phase 5: VIDEO GENERATION ── */
     if (compositedFrameUrl) {
-      generatedVideoUrl = await generateVideoFromFrame({
-        imageUrl: compositedFrameUrl,
-        brand: input.brand,
-        productDescription: input.productDescription,
-      });
+      const motionPrompt = directorDecision?.videoMotionPrompt ??
+        `Smooth cinematic shot featuring ${input.productDescription}, subtle camera motion, photorealistic, ambient lighting.`;
+
+      try {
+        generatedVideoUrl = await generateVideoFromFrame({
+          imageUrl: compositedFrameUrl,
+          motionPrompt,
+        });
+      } catch (videoErr) {
+        console.error("[Pipeline] Video generation threw:", videoErr);
+        generatedVideoUrl = null;
+      }
       pipelineSteps.push(generatedVideoUrl ? "video-generated" : "video-failed");
     }
   }
 
-  /* ── Fallback: at least generate a product image for the bubble ── */
-  let bubbleImageUrl = compositedFrameUrl;
-  if (!bubbleImageUrl) {
-    bubbleImageUrl = await generateProductImage(input.brand, input.productDescription);
-  }
-
   const processedVideoUrl = generatedVideoUrl || input.sourceVideoUrl;
 
+  // Extract a short product name from description for the CTA bar
+  const productName = input.productDescription.split(/[—\-–.,;]/)[0].trim().slice(0, 40);
+
   const adSlot: AdSlot = {
-    timestamp,
-    productName: `${input.brand} Featured Product`,
-    productImageUrl: bubbleImageUrl || input.productImageUrl || DEFAULT_PRODUCT_IMAGE,
+    timestamp: chosenTimestamp,
+    productName: productName || "Featured Product",
+    productImageUrl: DEFAULT_PRODUCT_IMAGE,
     buyUrl: input.buyUrl || "https://stripe.com",
     placement: { x: maskRegion.x + maskRegion.w / 2, y: maskRegion.y },
   };
@@ -455,7 +683,7 @@ export async function processVideoAction(
     sourceVideoUrl: input.sourceVideoUrl,
     processedVideoUrl,
     adSlot,
-    promptContext: `[${input.brand}] ${input.productDescription}`,
+    promptContext: `${input.productDescription}`,
   });
 
   return {
@@ -465,9 +693,24 @@ export async function processVideoAction(
     inpaintedFrameUrl: compositedFrameUrl,
     processedVideoUrl,
     adSlot,
-    insertAtTimestamp: timestamp,
+    insertAtTimestamp: chosenTimestamp,
     pipelineSteps,
     savedToSupabase: saveResult.savedToSupabase,
     saveError: "saveError" in saveResult ? saveResult.saveError : undefined,
+    directorDecision,
   };
+}
+
+/* ═══════ Fallback inpainting prompt builder ═══════════════════════ */
+
+function buildFallbackInpaintingPrompt(
+  sceneDesc: string | null,
+  brand: string,
+  productDescription: string,
+): string {
+  const product = productDescription
+    ? `${productDescription} by ${brand}`
+    : `a premium ${brand} product`;
+  const scene = sceneDesc ? `Scene: ${sceneDesc}. ` : "";
+  return `${scene}A photorealistic ${product} placed naturally in this scene, matching the lighting, shadows, perspective, and color temperature perfectly. The product looks like it was always there. Commercial photography quality, 8k.`;
 }

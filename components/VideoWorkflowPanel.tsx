@@ -1,611 +1,813 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { useState, useRef, useCallback, useEffect } from "react";
 import {
   processVideoAction,
   type ProcessVideoResult,
 } from "@/app/actions/process-video";
-import { VibePlayer } from "@/components/VibePlayer";
+import { VibePlayer } from "./VibePlayer";
 
 /* ═══════════════════════════  Types  ═══════════════════════════════ */
 
-type WorkflowInput = {
+type FormInput = {
   sourceVideoUrl: string;
-  brand: string;
   productDescription: string;
-  buyUrl: string;
   productImageUrl: string;
+  buyUrl: string;
 };
 
-const defaultInput: WorkflowInput = {
-  sourceVideoUrl:
-    "https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4",
-  brand: "Red Bull",
-  productDescription: "a silver and blue Red Bull energy drink can",
-  buyUrl: "https://stripe.com",
-  productImageUrl: "",
-};
-
-/* ═══════  Frame extraction (runs in browser via Canvas)  ══════════ */
-
-type FrameResult = {
+type FrameSample = {
   dataUrl: string;
+  timestamp: number;
   width: number;
   height: number;
 };
 
-function extractFrame(
-  videoUrl: string,
+/* ═══════════════════════════  Config  ══════════════════════════════ */
+
+const NUM_SAMPLES = 6; // frames to sample for Director
+const MAX_VIDEO_SECONDS = 30;
+
+const defaultInput: FormInput = {
+  sourceVideoUrl:
+    "https://videos.pexels.com/video-files/4828605/4828605-hd_1920_1080_25fps.mp4",
+  productDescription: "Red Bull Energy Drink — a premium energy drink for active, adventurous lifestyles. Slim 250ml aluminium can, blue & silver with the iconic two-red-bulls logo. Place it naturally on a surface where someone might grab one — a desk, counter, or table. The vibe should feel youthful and high-energy.",
+  productImageUrl:
+    "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?auto=format&fit=crop&w=700&q=80",
+  buyUrl: "",
+};
+
+/* ═══════════════  Frame sampling utility  ═════════════════════════ */
+
+function extractFrameAtTime(
+  video: HTMLVideoElement,
   timestamp: number,
-): Promise<FrameResult> {
-  return new Promise((resolve, reject) => {
+  maxDim = 768,
+): Promise<FrameSample | null> {
+  return new Promise((resolve) => {
+    const handler = () => {
+      video.removeEventListener("seeked", handler);
+      try {
+        const vw = video.videoWidth;
+        const vh = video.videoHeight;
+        if (!vw || !vh) { resolve(null); return; }
+
+        const scale = Math.min(maxDim / vw, maxDim / vh, 1);
+        const cw = Math.round(vw * scale);
+        const ch = Math.round(vh * scale);
+
+        const canvas = document.createElement("canvas");
+        canvas.width = cw;
+        canvas.height = ch;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) { resolve(null); return; }
+        ctx.drawImage(video, 0, 0, cw, ch);
+
+        resolve({
+          dataUrl: canvas.toDataURL("image/jpeg", 0.75),
+          timestamp,
+          width: cw,
+          height: ch,
+        });
+      } catch {
+        resolve(null);
+      }
+    };
+
+    video.addEventListener("seeked", handler);
+    video.currentTime = timestamp;
+  });
+}
+
+async function sampleFrames(
+  videoUrl: string,
+  numSamples: number = NUM_SAMPLES,
+): Promise<FrameSample[]> {
+  return new Promise((resolve) => {
     const video = document.createElement("video");
     video.crossOrigin = "anonymous";
     video.muted = true;
     video.playsInline = true;
     video.preload = "auto";
 
-    const cleanup = () => video.remove();
+    video.onloadedmetadata = async () => {
+      const duration = video.duration;
+      if (!duration || !isFinite(duration)) { resolve([]); return; }
 
-    video.addEventListener(
-      "seeked",
-      () => {
-        try {
-          const canvas = document.createElement("canvas");
-          const maxDim = 1024;
-          const scale = Math.min(
-            maxDim / video.videoWidth,
-            maxDim / video.videoHeight,
-            1,
-          );
-          canvas.width = Math.round(video.videoWidth * scale);
-          canvas.height = Math.round(video.videoHeight * scale);
+      const frames: FrameSample[] = [];
+      // Sample evenly across the video (skip very start and very end)
+      const start = Math.max(0.5, duration * 0.05);
+      const end = duration * 0.95;
+      const step = (end - start) / Math.max(numSamples - 1, 1);
 
-          const ctx = canvas.getContext("2d");
-          if (!ctx) throw new Error("Canvas not available");
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < numSamples; i++) {
+        const ts = start + step * i;
+        const frame = await extractFrameAtTime(video, ts);
+        if (frame) frames.push(frame);
+      }
 
-          cleanup();
-          resolve({
-            dataUrl: canvas.toDataURL("image/jpeg", 0.85),
-            width: canvas.width,
-            height: canvas.height,
-          });
-        } catch (err) {
-          cleanup();
-          reject(err);
-        }
-      },
-      { once: true },
-    );
+      resolve(frames);
+    };
 
-    video.addEventListener(
-      "error",
-      () => {
-        cleanup();
-        reject(
-          new Error(
-            "Could not load video — make sure the URL is direct (not YouTube) and supports CORS.",
-          ),
-        );
-      },
-      { once: true },
-    );
-
-    video.addEventListener(
-      "loadeddata",
-      () => {
-        video.currentTime = Math.min(timestamp, video.duration - 0.1);
-      },
-      { once: true },
-    );
-
+    video.onerror = () => resolve([]);
     video.src = videoUrl;
     video.load();
   });
 }
 
-/* ═══════ Mask generation (black canvas + white rect = inpaint area) ═══════ */
-
-const MASK_REGION = { x: 0.35, y: 0.2, w: 0.3, h: 0.5 };
-
-function generateMaskDataUrl(
-  width: number,
-  height: number,
-  region = MASK_REGION,
-): string {
-  const canvas = document.createElement("canvas");
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(
-    Math.round(region.x * width),
-    Math.round(region.y * height),
-    Math.round(region.w * width),
-    Math.round(region.h * height),
-  );
-
-  return canvas.toDataURL("image/png");
+function isYoutubeUrl(url: string): boolean {
+  return /youtube\.com|youtu\.be/i.test(url);
 }
 
-/* ═══════════════════════  Component  ══════════════════════════════ */
+function isMp4Url(url: string): boolean {
+  return /\.mp4($|\?|#)/i.test(url) || /^blob:/i.test(url);
+}
 
-export function VideoWorkflowPanel() {
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [step, setStep] = useState("");
-  const [progress, setProgress] = useState(0);
-  const [input, setInput] = useState<WorkflowInput>(defaultInput);
-  const [result, setResult] = useState<ProcessVideoResult | null>(null);
+function isImageUrl(url: string): boolean {
+  return /^https?:\/\/.+\.(png|jpe?g|webp|avif)($|\?|#)/i.test(url) || /^blob:/i.test(url);
+}
 
-  /* ─── Timestamp picker state ─── */
-  const [adTimestamp, setAdTimestamp] = useState(3);
-  const [videoDuration, setVideoDuration] = useState(10);
-  const [previewFrame, setPreviewFrame] = useState<string | null>(null);
-
-  /* ─── Interactive mask drawing state ─── */
-  const [maskRegion, setMaskRegion] = useState(MASK_REGION);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
-  const [hasUserMask, setHasUserMask] = useState(false);
-  const maskContainerRef = useRef<HTMLDivElement>(null);
-
-  const handleMaskMouseDown = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-      setDrawStart({ x, y });
-      setIsDrawing(true);
-    },
-    [],
-  );
-
-  const handleMaskMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
-      if (!isDrawing || !drawStart) return;
-      const rect = e.currentTarget.getBoundingClientRect();
-      const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-      const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
-      setMaskRegion({
-        x: Math.min(drawStart.x, x),
-        y: Math.min(drawStart.y, y),
-        w: Math.abs(x - drawStart.x),
-        h: Math.abs(y - drawStart.y),
-      });
-    },
-    [isDrawing, drawStart],
-  );
-
-  const handleMaskMouseUp = useCallback(() => {
-    if (isDrawing && drawStart) {
-      setHasUserMask(true);
-    }
-    setIsDrawing(false);
-    setDrawStart(null);
-  }, [isDrawing, drawStart]);
-
-  // Get video duration when URL changes
-  useEffect(() => {
+async function getVideoDuration(videoUrl: string): Promise<number | null> {
+  return new Promise((resolve) => {
     const video = document.createElement("video");
-    video.crossOrigin = "anonymous";
-    video.muted = true;
     video.preload = "metadata";
 
-    video.addEventListener("loadedmetadata", () => {
-      if (video.duration && isFinite(video.duration)) {
-        setVideoDuration(video.duration);
-        setAdTimestamp(Math.round(video.duration * 0.25 * 10) / 10);
-      }
-      video.remove();
-    });
+    video.onloadedmetadata = () => {
+      const duration = video.duration;
+      resolve(isFinite(duration) ? duration : null);
+    };
 
-    video.addEventListener("error", () => {
-      video.remove();
-    });
-
-    video.src = input.sourceVideoUrl;
+    video.onerror = () => resolve(null);
+    video.src = videoUrl;
     video.load();
-  }, [input.sourceVideoUrl]);
+  });
+}
 
-  // Grab a preview thumbnail when slider changes
-  const grabPreview = useCallback(
-    async (ts: number) => {
-      try {
-        const frame = await extractFrame(input.sourceVideoUrl, ts);
-        setPreviewFrame(frame.dataUrl);
-      } catch {
-        setPreviewFrame(null);
+/* ═══════════════════════════  Component  ═══════════════════════════ */
+
+export function VideoWorkflowPanel() {
+  const [input, setInput] = useState<FormInput>(defaultInput);
+  const [result, setResult] = useState<ProcessVideoResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [progressMsg, setProgressMsg] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [sampledFrames, setSampledFrames] = useState<FrameSample[]>([]);
+  const [isSampling, setIsSampling] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [uploadedImageName, setUploadedImageName] = useState("");
+  const [liveLogs, setLiveLogs] = useState<string[]>([]);
+  const [elapsedSec, setElapsedSec] = useState(0);
+  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const logEndRef = useRef<HTMLDivElement | null>(null);
+  const uploadedBlobUrlRef = useRef<string | null>(null);
+  const uploadedImageBlobUrlRef = useRef<string | null>(null);
+
+  /* ── Campo helpers ── */
+  const addLog = useCallback((msg: string) => {
+    const ts = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    setLiveLogs((prev) => [...prev, `[${ts}] ${msg}`]);
+    // Auto-scroll
+    setTimeout(() => logEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
+  }, []);
+
+  const set = (key: keyof FormInput) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
+    setInput((p) => ({ ...p, [key]: e.target.value }));
+
+  const setSourceVideoUrl = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (uploadedBlobUrlRef.current) {
+      URL.revokeObjectURL(uploadedBlobUrlRef.current);
+      uploadedBlobUrlRef.current = null;
+    }
+    setUploadedFileName("");
+    setInput((p) => ({ ...p, sourceVideoUrl: e.target.value }));
+  };
+
+  const handleMp4Upload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isMp4File = file.type === "video/mp4" || /\.mp4$/i.test(file.name);
+    if (!isMp4File) {
+      setError("Please upload an .mp4 file.");
+      return;
+    }
+
+    const blobUrl = URL.createObjectURL(file);
+    const duration = await getVideoDuration(blobUrl);
+
+    if (!duration) {
+      URL.revokeObjectURL(blobUrl);
+      setError("Could not read uploaded video metadata.");
+      return;
+    }
+
+    if (duration > MAX_VIDEO_SECONDS) {
+      URL.revokeObjectURL(blobUrl);
+      setError(`Uploaded video is ${duration.toFixed(1)}s. Max allowed length is ${MAX_VIDEO_SECONDS}s.`);
+      return;
+    }
+
+    if (uploadedBlobUrlRef.current) {
+      URL.revokeObjectURL(uploadedBlobUrlRef.current);
+    }
+    uploadedBlobUrlRef.current = blobUrl;
+    setUploadedFileName(file.name);
+    setError(null);
+    setInput((p) => ({ ...p, sourceVideoUrl: blobUrl }));
+  };
+
+  const clearUpload = () => {
+    if (uploadedBlobUrlRef.current) {
+      URL.revokeObjectURL(uploadedBlobUrlRef.current);
+      uploadedBlobUrlRef.current = null;
+    }
+    setUploadedFileName("");
+    setSampledFrames([]);
+    lastSampledUrl.current = "";
+    setInput((p) => ({ ...p, sourceVideoUrl: "" }));
+  };
+
+  const isUpload = !!uploadedFileName;
+  const hasTypedUrl = !isUpload && input.sourceVideoUrl.length > 0 && !input.sourceVideoUrl.startsWith("blob:");
+
+  /* ── Image upload helpers ── */
+  const setProductImageUrl = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (uploadedImageBlobUrlRef.current) {
+      URL.revokeObjectURL(uploadedImageBlobUrlRef.current);
+      uploadedImageBlobUrlRef.current = null;
+    }
+    setUploadedImageName("");
+    setInput((p) => ({ ...p, productImageUrl: e.target.value }));
+  };
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const isValid = /\.(png|jpe?g|webp|avif)$/i.test(file.name) ||
+      ["image/png", "image/jpeg", "image/webp", "image/avif"].includes(file.type);
+    if (!isValid) {
+      setError("Please upload a .jpg, .png, .webp, or .avif image.");
+      return;
+    }
+
+    const blobUrl = URL.createObjectURL(file);
+    if (uploadedImageBlobUrlRef.current) {
+      URL.revokeObjectURL(uploadedImageBlobUrlRef.current);
+    }
+    uploadedImageBlobUrlRef.current = blobUrl;
+    setUploadedImageName(file.name);
+    setError(null);
+    setInput((p) => ({ ...p, productImageUrl: blobUrl }));
+  };
+
+  const clearImageUpload = () => {
+    if (uploadedImageBlobUrlRef.current) {
+      URL.revokeObjectURL(uploadedImageBlobUrlRef.current);
+      uploadedImageBlobUrlRef.current = null;
+    }
+    setUploadedImageName("");
+    setInput((p) => ({ ...p, productImageUrl: "" }));
+  };
+
+  const isImageUpload = !!uploadedImageName;
+  const hasTypedImageUrl = !isImageUpload && input.productImageUrl.length > 0 && !input.productImageUrl.startsWith("blob:");
+
+  /* ── Auto-sample frames when video URL changes ── */
+  const lastSampledUrl = useRef("");
+
+  const doSampleFrames = useCallback(async (url: string) => {
+    if (!url || url === lastSampledUrl.current) return;
+    if (isYoutubeUrl(url)) {
+      setError("YouTube links are not supported yet. Please use a direct .mp4 URL (max 30 seconds).");
+      setSampledFrames([]);
+      return;
+    }
+    if (!isMp4Url(url)) {
+      setError("Please use a direct .mp4 URL (YouTube pages and other formats are not supported yet).");
+      setSampledFrames([]);
+      return;
+    }
+    lastSampledUrl.current = url;
+    setIsSampling(true);
+    setSampledFrames([]);
+    setError(null);
+    try {
+      const duration = await getVideoDuration(url);
+      if (!duration) {
+        setError("Could not read video metadata. Please use a public direct .mp4 URL.");
+        return;
       }
-    },
-    [input.sourceVideoUrl],
-  );
+      if (duration > MAX_VIDEO_SECONDS) {
+        setError(`Video is ${duration.toFixed(1)}s. Max allowed length is ${MAX_VIDEO_SECONDS}s.`);
+        return;
+      }
+
+      const frames = await sampleFrames(url);
+      setSampledFrames(frames);
+      console.log(`[UI] Sampled ${frames.length} frames from video`);
+    } catch {
+      setSampledFrames([]);
+    } finally {
+      setIsSampling(false);
+    }
+  }, []);
+
+  // Debounced sampling on URL change
+  useEffect(() => {
+    if (!input.sourceVideoUrl) return;
+    const timer = setTimeout(() => doSampleFrames(input.sourceVideoUrl), 800);
+    return () => clearTimeout(timer);
+  }, [input.sourceVideoUrl, doSampleFrames]);
 
   useEffect(() => {
-    const timeout = setTimeout(() => grabPreview(adTimestamp), 400);
-    return () => clearTimeout(timeout);
-  }, [adTimestamp, grabPreview]);
+    return () => {
+      if (uploadedBlobUrlRef.current) {
+        URL.revokeObjectURL(uploadedBlobUrlRef.current);
+      }
+      if (uploadedImageBlobUrlRef.current) {
+        URL.revokeObjectURL(uploadedImageBlobUrlRef.current);
+      }
+    };
+  }, []);
 
-  const statusText = useMemo(() => {
-    if (isProcessing) return step;
-    if (result) {
-      if (result.aiClipUrl) {
-        return "✓ AI product placement video generated! Watch below.";
-      }
-      if (result.inpaintedFrameUrl) {
-        return "✓ Product placed in frame (video gen unavailable)";
-      }
-      return "Ready — using overlay mode";
+  /* ── Submit ── */
+  async function handleSubmit() {
+    if (isYoutubeUrl(input.sourceVideoUrl)) {
+      setError("YouTube links are not supported yet. Please paste a direct .mp4 URL.");
+      return;
     }
-    return "Idle";
-  }, [isProcessing, step, result]);
+    if (!isMp4Url(input.sourceVideoUrl)) {
+      setError("Please use a direct .mp4 URL.");
+      return;
+    }
 
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (isProcessing) return;
+    if (!input.productDescription?.trim()) {
+      setError("Product description is required — the AI Director needs to know what to place!");
+      return;
+    }
+    if (!input.productImageUrl?.trim()) {
+      setError("Reference product image is required for exact visual fidelity.");
+      return;
+    }
+    if (!isImageUrl(input.productImageUrl.trim())) {
+      setError("Please provide a direct public image URL (.png, .jpg, .jpeg, .webp, or .avif).");
+      return;
+    }
 
-    setIsProcessing(true);
+    const duration = await getVideoDuration(input.sourceVideoUrl);
+    if (!duration) {
+      setError("Could not read video metadata. Please use a public direct .mp4 URL.");
+      return;
+    }
+    if (duration > MAX_VIDEO_SECONDS) {
+      setError(`Video is ${duration.toFixed(1)}s. Max allowed length is ${MAX_VIDEO_SECONDS}s.`);
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
     setResult(null);
-    setProgress(0);
+    setLiveLogs([]);
+    setElapsedSec(0);
+    setProgressMsg("Starting pipeline …");
+
+    // Start elapsed timer
+    const startTime = Date.now();
+    timerRef.current = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+
+    addLog("Pipeline started");
 
     try {
-      setStep(`① Extracting frame at ${adTimestamp.toFixed(1)}s …`);
-      setProgress(5);
-      let frameDataUrl: string | undefined;
-      let maskDataUrl: string | undefined;
-
-      try {
-        const frame = await extractFrame(input.sourceVideoUrl, adTimestamp);
-        frameDataUrl = frame.dataUrl;
-        maskDataUrl = generateMaskDataUrl(frame.width, frame.height, maskRegion);
-        setStep("② Frame + mask captured!");
-        setProgress(10);
-      } catch (err) {
-        console.warn("Frame extraction failed:", err);
-        setStep("⚠ Frame extraction failed (CORS). Falling back …");
-        toast.warning(
-          "Could not extract frame — video may block CORS. Using overlay mode.",
-        );
+      // If frames haven't been sampled yet, do it now
+      let frames = sampledFrames;
+      if (frames.length === 0) {
+        setProgressMsg("Extracting video frames …");
+        addLog("Extracting video frames …");
+        frames = await sampleFrames(input.sourceVideoUrl);
+        setSampledFrames(frames);
+        addLog(`✓ Sampled ${frames.length} frames`);
       }
 
-      setStep(
-        frameDataUrl
-          ? "③ Analysing scene & preparing product image …"
-          : "③ Generating product image …",
-      );
-      setProgress(15);
+      // Convert blob image URL to base64 data URL (blob URLs can't be accessed by the server)
+      // Also re-encodes as JPEG so OpenAI accepts it (AVIF is not supported by their API)
+      let productImageForServer = input.productImageUrl;
+      if (productImageForServer.startsWith("blob:")) {
+        addLog("Converting uploaded image to JPEG …");
+        try {
+          productImageForServer = await new Promise<string>((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+              const canvas = document.createElement("canvas");
+              canvas.width = img.naturalWidth;
+              canvas.height = img.naturalHeight;
+              const ctx = canvas.getContext("2d");
+              if (!ctx) { reject(new Error("Canvas context failed")); return; }
+              ctx.drawImage(img, 0, 0);
+              resolve(canvas.toDataURL("image/jpeg", 0.92));
+            };
+            img.onerror = () => reject(new Error("Image load failed"));
+            img.src = productImageForServer;
+          });
+          addLog("✓ Image converted to JPEG");
+        } catch {
+          addLog("✗ FAILED to convert uploaded image");
+          setError("Failed to read uploaded image. Please try again.");
+          return;
+        }
+      }
 
-      // Start a progress simulation for the long server action
-      const progressInterval = setInterval(() => {
-        setProgress((prev) => {
-          // Slowly crawl from current to 90%, never exceed 90 while processing
-          if (prev < 30) return prev + 2;
-          if (prev < 50) return prev + 1;
-          if (prev < 70) return prev + 0.5;
-          if (prev < 85) return prev + 0.2;
-          return Math.min(prev + 0.1, 90);
-        });
-      }, 2000);
+      setProgressMsg("📤 Sending to AI Director (GPT-4o) …");
+      addLog("📤 Sending frames + product brief to AI Director (GPT-4o) …");
+      addLog("⏳ Director analyses video → picks placement → writes prompts");
+      addLog("⏳ Then SDXL composites → Kling generates video (3-8 min)");
 
-      // Update step text based on elapsed time
-      const stepInterval = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 20 && prev < 30) setStep("④ AI is generating your product image …");
-          if (prev >= 30 && prev < 45) setStep("⑤ Compositing product into scene & harmonizing …");
-          if (prev >= 45 && prev < 60) setStep("⑥ Inpainting done! Generating video clip …");
-          if (prev >= 60 && prev < 80) setStep("⑦ Kling is animating the frame … (this takes a while)");
-          if (prev >= 80) setStep("⑧ Almost there — finalising video …");
-          return prev;
-        });
-      }, 3000);
-
-      const next = await processVideoAction({
-        ...input,
-        frameDataUrl,
-        maskDataUrl,
-        timestamp: adTimestamp,
-        maskRegion,
+      const res = await processVideoAction({
+        sourceVideoUrl: input.sourceVideoUrl,
+        productDescription: input.productDescription,
+        productImageUrl: productImageForServer,
+        buyUrl: input.buyUrl || undefined,
+        frameSamples: frames,
       });
 
-      clearInterval(progressInterval);
-      clearInterval(stepInterval);
-      setProgress(100);
-      setStep("✓ Done!");
-      setResult(next);
+      // Log pipeline steps from the server result
+      if (res.pipelineSteps?.length) {
+        for (const step of res.pipelineSteps) {
+          const icon = step.includes("fail") ? "✗" : "✓";
+          addLog(`${icon} ${step}`);
+        }
+      }
 
-      if (next.aiClipUrl) {
-        toast.success(
-          "AI product placement video generated! The ad clip is spliced into the original video below.",
-        );
-      } else if (next.inpaintedFrameUrl) {
-        toast.success(
-          "Product painted into frame! Video generation was unavailable.",
-        );
+      if (res.aiClipUrl) {
+        addLog("🎉 Video generated successfully!");
       } else {
-        toast.info("Using original video with shoppable overlay.");
+        addLog("⚠ Pipeline completed but no video was generated");
       }
 
-      if (!next.savedToSupabase) {
-        toast.warning(`DB save failed: ${next.saveError ?? "unknown"}`);
+      if (res.savedToSupabase) {
+        addLog("✓ Saved to your library");
       }
+      if (res.saveError) {
+        addLog(`⚠ Save error: ${res.saveError}`);
+      }
+
+      setResult(res);
+      setProgressMsg("✅ Done!");
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : "Processing failed.",
-      );
+      const msg = err instanceof Error ? err.message : "Pipeline failed.";
+      addLog(`✗ ERROR: ${msg}`);
+      setError(msg);
     } finally {
-      setIsProcessing(false);
-      setStep("");
+      if (progressRef.current) clearInterval(progressRef.current);
+      if (timerRef.current) clearInterval(timerRef.current);
+      setLoading(false);
+      addLog("Pipeline finished");
     }
-  };
+  }
 
-  const handleRetry = () => {
-    const fakeEvent = {
-      preventDefault: () => {},
-    } as React.FormEvent<HTMLFormElement>;
-    handleSubmit(fakeEvent);
-  };
+  /* ═══════════════════  Render  ════════════════════════════════════ */
 
   return (
-    <section className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-6">
-      <h2 className="text-xl font-semibold">AI Video Product Placement</h2>
-      <p className="mt-2 text-sm text-zinc-400">
-        Paste a video URL, describe your product, choose{" "}
-        <strong className="text-zinc-200">when</strong> in the video to
-        place the ad. AI extracts that frame, paints your product into the
-        scene, generates a video clip, and splices it into the original.
-      </p>
+    <div className="space-y-8 max-w-3xl mx-auto">
+      {/* ── FORM ── */}
+      <div className="bg-gray-900 rounded-2xl p-6 space-y-5 border border-gray-800">
+        <h2 className="text-xl font-semibold text-white flex items-center gap-2">
+          🎬 AI Director Pipeline
+        </h2>
+        <p className="text-sm text-gray-400">
+          Enter your video and product details — the AI Director will decide the
+          perfect moment and position for natural product placement.
+        </p>
 
-      {/* ─── Form ─── */}
-      <form
-        onSubmit={handleSubmit}
-        className="mt-5 grid gap-3 md:grid-cols-2"
-      >
-        <label className="flex flex-col gap-1 text-sm text-zinc-300 md:col-span-2">
-          Video URL
-          <input
-            value={input.sourceVideoUrl}
-            onChange={(e) =>
-              setInput((p) => ({ ...p, sourceVideoUrl: e.target.value }))
-            }
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
-            placeholder="https://..."
-            required
-          />
-        </label>
-
-        {/* ─── Timestamp Picker ─── */}
-        <div className="flex flex-col gap-2 md:col-span-2">
-          <label className="text-sm text-zinc-300">
-            Ad Placement Time:{" "}
-            <span className="font-mono text-emerald-400">
-              {adTimestamp.toFixed(1)}s
-            </span>{" "}
-            <span className="text-zinc-500">
-              / {videoDuration.toFixed(1)}s
-            </span>
+        {/* VIDEO URL */}
+        <div>
+          <label className="block text-sm font-medium text-gray-300 mb-1">
+            Video URL
           </label>
           <input
-            type="range"
-            min={0.5}
-            max={Math.max(videoDuration - 0.5, 1)}
-            step={0.1}
-            value={adTimestamp}
-            onChange={(e) => setAdTimestamp(parseFloat(e.target.value))}
-            className="h-2 w-full cursor-pointer appearance-none rounded-full bg-zinc-800 accent-emerald-500"
+            type="text"
+            value={isUpload ? "" : input.sourceVideoUrl}
+            onChange={setSourceVideoUrl}
+            disabled={isUpload}
+            className={`w-full rounded-lg bg-gray-800 border border-gray-700 px-4 py-2.5 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition ${
+              isUpload ? "opacity-40 cursor-not-allowed" : ""
+            }`}
+            placeholder={isUpload ? "Upload active — remove file to use a URL" : "https://example.com/video.mp4 (max 30s)"}
           />
-          <div className="flex flex-col gap-3">
-            {previewFrame ? (
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-4">
-                {/* Interactive mask-drawing canvas */}
-                <div
-                  ref={maskContainerRef}
-                  className="relative shrink-0 cursor-crosshair select-none overflow-hidden rounded-lg border-2 border-zinc-700 hover:border-emerald-500/60"
-                  style={{ maxWidth: 480 }}
-                  onMouseDown={handleMaskMouseDown}
-                  onMouseMove={handleMaskMouseMove}
-                  onMouseUp={handleMaskMouseUp}
-                  onMouseLeave={handleMaskMouseUp}
-                >
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={previewFrame}
-                    alt="Frame preview"
-                    className="block w-full"
-                    draggable={false}
-                  />
-                  {/* Mask overlay */}
-                  <div
-                    className="pointer-events-none absolute border-2 border-dashed border-emerald-400 bg-emerald-400/20"
-                    style={{
-                      left: `${maskRegion.x * 100}%`,
-                      top: `${maskRegion.y * 100}%`,
-                      width: `${maskRegion.w * 100}%`,
-                      height: `${maskRegion.h * 100}%`,
-                    }}
-                  >
-                    <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-emerald-600/90 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                      Product area
-                    </span>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <span className="text-xs font-medium text-emerald-400">
-                    {hasUserMask
-                      ? "✓ Custom region selected"
-                      : "Click & drag on the frame to mark where the product should appear"}
-                  </span>
-                  <span className="text-xs text-zinc-500">
-                    The green box shows the inpainting target area.
-                    AI will analyse the scene and paint your product naturally into
-                    this region, matching the lighting and perspective.
-                  </span>
-                  {hasUserMask && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMaskRegion(MASK_REGION);
-                        setHasUserMask(false);
-                      }}
-                      className="mt-1 w-fit rounded border border-zinc-700 px-2 py-0.5 text-xs text-zinc-400 hover:text-zinc-200"
-                    >
-                      Reset to default
-                    </button>
-                  )}
-                </div>
-              </div>
+          <p className="text-xs text-gray-500 mt-1">
+            Supports direct public <span className="text-gray-300">.mp4</span> URLs only (max {MAX_VIDEO_SECONDS}s). YouTube links are not supported yet.
+          </p>
+
+          <div className="mt-3 flex items-center gap-3 text-xs text-gray-400">
+            <div className="flex-1 border-t border-gray-800" />
+            <span>OR</span>
+            <div className="flex-1 border-t border-gray-800" />
+          </div>
+
+          <div className={`mt-3 rounded-lg border border-gray-800 bg-gray-900/70 p-3 ${
+            hasTypedUrl ? "opacity-40 pointer-events-none" : ""
+          }`}>
+            <label className="block text-xs font-medium text-gray-300 mb-2">
+              Upload .mp4 file (max {MAX_VIDEO_SECONDS}s)
+            </label>
+
+            {!isUpload ? (
+              <input
+                type="file"
+                accept="video/mp4,.mp4"
+                onChange={handleMp4Upload}
+                disabled={hasTypedUrl}
+                className="block w-full text-xs text-gray-300 file:mr-3 file:rounded-md file:border-0 file:bg-gray-700 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-white hover:file:bg-gray-600"
+              />
             ) : (
-              <span className="text-xs text-zinc-500">
-                Loading frame preview…
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-green-400">✅ {uploadedFileName}</span>
+                <button
+                  type="button"
+                  onClick={clearUpload}
+                  className="text-xs text-red-400 hover:text-red-300 underline underline-offset-2 transition"
+                >
+                  Remove
+                </button>
+              </div>
+            )}
+          </div>
+
+          {isSampling && (
+            <p className="text-xs text-blue-400 mt-1 animate-pulse">
+              Sampling frames from video …
+            </p>
+          )}
+          {sampledFrames.length > 0 && !isSampling && (
+            <p className="text-xs text-green-400 mt-1">
+              ✓ {sampledFrames.length} frames ready for AI Director
+            </p>
+          )}
+        </div>
+
+        {/* PRODUCT BRIEF — the one field that matters */}
+        <div className="bg-blue-950/40 rounded-xl p-4 border border-blue-800/50">
+          <label className="block text-sm font-semibold text-blue-300 mb-1">
+            Product Brief *
+          </label>
+          <textarea
+            value={input.productDescription}
+            onChange={set("productDescription")}
+            rows={4}
+            className="w-full rounded-lg bg-gray-800 border border-blue-700/50 px-4 py-2.5 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition resize-none"
+            placeholder={"Tell the AI Director everything:\n• Brand & product name (e.g. \"Red Bull Energy Drink\")\n• What it looks like (e.g. \"slim 250ml blue & silver aluminium can\")\n• Where it belongs (e.g. \"on a desk, kitchen counter, café table\")\n• The vibe (e.g. \"youthful, high-energy, adventurous\")"}
+          />
+          <p className="text-xs text-blue-400/70 mt-1">
+            This is ALL the AI Director reads. The more you tell it — brand, appearance, mood, where it fits — the more natural the placement.
+          </p>
+        </div>
+
+        {/* REFERENCE IMAGE — mandatory for exact visual fidelity */}
+        <div className="bg-purple-950/30 rounded-xl p-4 border border-purple-800/50">
+          <label className="block text-sm font-semibold text-purple-300 mb-1">
+            Reference Product Image *
+          </label>
+          <input
+            type="text"
+            value={isImageUpload ? "" : input.productImageUrl}
+            onChange={setProductImageUrl}
+            disabled={isImageUpload}
+            className={`w-full rounded-lg bg-gray-800 border border-purple-700/50 px-4 py-2.5 text-white placeholder-gray-500 focus:border-purple-500 focus:ring-1 focus:ring-purple-500 transition text-sm ${
+              isImageUpload ? "opacity-40 cursor-not-allowed" : ""
+            }`}
+            placeholder={isImageUpload ? "Upload active — remove file to use a URL" : "https://example.com/product.jpg"}
+          />
+          <p className="text-xs text-purple-300/80 mt-1">
+            For exact visual fidelity, a reference product image is still best (used for generation, not as an overlay).
+          </p>
+
+          <div className="mt-3 flex items-center gap-3 text-xs text-purple-400/60">
+            <div className="flex-1 border-t border-purple-800/40" />
+            <span>OR</span>
+            <div className="flex-1 border-t border-purple-800/40" />
+          </div>
+
+          <div className={`mt-3 rounded-lg border border-purple-800/30 bg-purple-950/20 p-3 ${
+            hasTypedImageUrl ? "opacity-40 pointer-events-none" : ""
+          }`}>
+            <label className="block text-xs font-medium text-purple-300/80 mb-2">
+              Upload image file
+            </label>
+
+            {!isImageUpload ? (
+              <input
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/avif,.png,.jpg,.jpeg,.webp,.avif"
+                onChange={handleImageUpload}
+                disabled={hasTypedImageUrl}
+                className="block w-full text-xs text-gray-300 file:mr-3 file:rounded-md file:border-0 file:bg-purple-900/60 file:px-3 file:py-1.5 file:text-xs file:font-medium file:text-purple-200 hover:file:bg-purple-800/60"
+              />
+            ) : (
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-green-400">✅ {uploadedImageName}</span>
+                <button
+                  type="button"
+                  onClick={clearImageUpload}
+                  className="text-xs text-red-400 hover:text-red-300 underline underline-offset-2 transition"
+                >
+                  Remove
+                </button>
+              </div>
             )}
           </div>
         </div>
 
-        <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          Brand
+        {/* BUY LINK — the only extra field (it's the shop URL for the CTA bar) */}
+        <div>
+          <label className="block text-sm font-medium text-gray-400 mb-1">
+            Buy Link <span className="text-gray-600">(optional — shown on the Shop button)</span>
+          </label>
           <input
-            value={input.brand}
-            onChange={(e) =>
-              setInput((p) => ({ ...p, brand: e.target.value }))
-            }
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
-            required
-          />
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm text-zinc-300">
-          Buy URL
-          <input
+            type="text"
             value={input.buyUrl}
-            onChange={(e) =>
-              setInput((p) => ({ ...p, buyUrl: e.target.value }))
-            }
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
+            onChange={set("buyUrl")}
+            className="w-full rounded-lg bg-gray-800 border border-gray-700 px-4 py-2.5 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition text-sm"
+            placeholder="https://store.example.com/product"
           />
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm text-zinc-300 md:col-span-2">
-          Product Description
-          <input
-            value={input.productDescription}
-            onChange={(e) =>
-              setInput((p) => ({
-                ...p,
-                productDescription: e.target.value,
-              }))
-            }
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
-            placeholder="e.g. red energy drink can, white Nike sneaker, black headphones"
-            required
-          />
-          <span className="text-xs text-zinc-500">
-            AI paints this product INTO the video frame at your chosen
-            timestamp, then animates it
-          </span>
-        </label>
-
-        <label className="flex flex-col gap-1 text-sm text-zinc-300 md:col-span-2">
-          Product image URL{" "}
-          <span className="text-zinc-600">
-            (optional — leave empty to use AI-generated)
-          </span>
-          <input
-            value={input.productImageUrl}
-            onChange={(e) =>
-              setInput((p) => ({ ...p, productImageUrl: e.target.value }))
-            }
-            className="rounded-md border border-zinc-700 bg-zinc-950 px-3 py-2 text-zinc-100 outline-none focus:border-zinc-500"
-            placeholder="https://... or leave empty"
-          />
-        </label>
-
-        <div className="mt-1 flex flex-wrap items-center gap-2 md:col-span-2">
-          <button
-            type="submit"
-            disabled={isProcessing}
-            className="rounded-md bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-900 hover:bg-white disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            {isProcessing ? "Processing…" : "Process Video"}
-          </button>
-          <button
-            type="button"
-            onClick={handleRetry}
-            disabled={isProcessing}
-            className="rounded-md border border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-200 hover:border-zinc-500 disabled:cursor-not-allowed disabled:opacity-70"
-          >
-            Retry
-          </button>
-          <span className="text-xs text-zinc-400">
-            Status: {statusText}
-          </span>
         </div>
-      </form>
 
-      {/* ─── Progress spinner ─── */}
-      {isProcessing && (
-        <div className="mt-6 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-          <div className="flex items-center gap-3">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-emerald-400 border-t-transparent" />
-            <span className="text-sm text-zinc-300">{step}</span>
-            <span className="ml-auto font-mono text-sm font-semibold text-emerald-400">
-              {Math.round(progress)}%
+        {/* SAMPLED FRAMES preview */}
+        {sampledFrames.length > 0 && (
+          <div>
+            <p className="text-xs text-gray-500 mb-2">
+              Frames sampled for AI Director — it will choose the best one:
+            </p>
+            <div className="flex gap-2 overflow-x-auto pb-2">
+              {sampledFrames.map((f, i) => (
+                <div key={i} className="shrink-0 relative group">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={f.dataUrl}
+                    alt={`Frame ${i + 1}`}
+                    className="h-16 rounded-md border border-gray-700 object-cover"
+                  />
+                  <span className="absolute bottom-0 left-0 text-[10px] bg-black/70 text-gray-300 px-1 rounded-tr">
+                    {f.timestamp.toFixed(1)}s
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* SUBMIT */}
+        <button
+          onClick={handleSubmit}
+          disabled={
+            loading ||
+            !input.sourceVideoUrl ||
+            !input.productDescription?.trim() ||
+            !input.productImageUrl?.trim()
+          }
+          className="w-full py-3 rounded-xl font-semibold text-white bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-40 disabled:cursor-not-allowed transition"
+        >
+          {loading ? "🎬 AI Director is working …" : "🚀 Let AI Director Place Product"}
+        </button>
+      </div>
+
+      {/* ── LIVE LOG PANEL ── */}
+      {(loading || liveLogs.length > 0) && (
+        <div className="bg-gray-900 rounded-2xl p-5 border border-gray-800 space-y-3">
+          {/* Header with status + elapsed time */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              {loading && (
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500" />
+                </span>
+              )}
+              <p className="text-sm text-gray-300">{progressMsg}</p>
+            </div>
+            <span className="text-sm font-mono text-blue-400 tabular-nums">
+              {Math.floor(elapsedSec / 60)}:{String(elapsedSec % 60).padStart(2, "0")}
             </span>
           </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
-            <div
-              className="h-full rounded-full bg-linear-to-r from-emerald-600 via-emerald-400 to-emerald-500 transition-all duration-1000 ease-out"
-              style={{ width: `${Math.round(progress)}%` }}
-            />
+
+          {/* Indeterminate progress bar while loading */}
+          {loading && (
+            <div className="w-full bg-gray-800 rounded-full h-1.5 overflow-hidden">
+              <div className="bg-linear-to-r from-blue-500 via-purple-500 to-blue-500 h-1.5 rounded-full animate-pulse" style={{ width: "100%" }} />
+            </div>
+          )}
+
+          {/* Scrollable log list */}
+          <div className="max-h-48 overflow-y-auto rounded-lg bg-black/40 border border-gray-800 p-3 font-mono text-xs space-y-0.5">
+            {liveLogs.length === 0 && loading && (
+              <p className="text-gray-600 italic">Waiting for logs …</p>
+            )}
+            {liveLogs.map((line, i) => (
+              <p
+                key={i}
+                className={
+                  line.includes("✗") || line.includes("ERROR")
+                    ? "text-red-400"
+                    : line.includes("✓") || line.includes("🎉")
+                    ? "text-green-400"
+                    : line.includes("⚠")
+                    ? "text-yellow-400"
+                    : "text-gray-400"
+                }
+              >
+                {line}
+              </p>
+            ))}
+            <div ref={logEndRef} />
           </div>
-          <p className="mt-2 text-xs text-zinc-500">
-            Product image ~5s &bull; Scene analysis ~5s &bull; Compositing ~10s &bull; Video generation 1-5 min.
-            Don&apos;t close this tab.
-          </p>
         </div>
       )}
 
-      {/* ─── Results ─── */}
-      {result && !isProcessing ? (
-        <div className="mt-6 space-y-4">
-          {/* Inpainted frame preview */}
-          {result.inpaintedFrameUrl ? (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
-              <h3 className="mb-2 text-sm font-semibold text-emerald-400">
-                AI-Inpainted Frame (product placed in scene)
+      {/* ── ERROR ── */}
+      {error && (
+        <div className="bg-red-900/30 border border-red-800 rounded-xl p-4">
+          <p className="text-red-300 text-sm">{error}</p>
+        </div>
+      )}
+
+      {/* ── RESULTS ── */}
+      {result && (
+        <div className="space-y-6">
+          {/* Director's Decision */}
+          {result.directorDecision && (
+            <div className="bg-gray-900 rounded-2xl p-6 border border-gray-800 space-y-3">
+              <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                🎯 AI Director&apos;s Decision
               </h3>
-              <div className="flex flex-col items-start gap-4 sm:flex-row">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={result.inpaintedFrameUrl}
-                  alt="Product in scene"
-                  className="w-full max-w-md rounded-lg border border-zinc-700"
-                />
-                <p className="text-xs text-zinc-500">
-                  Fal AI painted your product into the frame at{" "}
-                  {result.insertAtTimestamp.toFixed(1)}s.
-                  {result.aiClipUrl
-                    ? " This was animated into a 5s clip and spliced into the video below."
-                    : " Video generation was unavailable — showing original video with shoppable overlay."}
-                </p>
+
+              <div className="space-y-2 text-sm">
+                <div>
+                  <span className="text-gray-400">Scene: </span>
+                  <span className="text-gray-200">
+                    {result.directorDecision.sceneDescription}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-gray-400">Why this placement: </span>
+                  <span className="text-gray-200">
+                    {result.directorDecision.placementRationale}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-4 text-xs text-gray-500">
+                  <span>
+                    Frame: #{result.directorDecision.chosenFrameIndex + 1} at{" "}
+                    {result.directorDecision.chosenTimestamp.toFixed(1)}s
+                  </span>
+                  <span>
+                    Region: ({(result.directorDecision.maskRegion.x * 100).toFixed(0)}%,{" "}
+                    {(result.directorDecision.maskRegion.y * 100).toFixed(0)}%) →{" "}
+                    {(result.directorDecision.maskRegion.w * 100).toFixed(0)}% ×{" "}
+                    {(result.directorDecision.maskRegion.h * 100).toFixed(0)}%
+                  </span>
+                </div>
               </div>
             </div>
-          ) : null}
+          )}
 
-          {/* Video player — splices AI clip into original */}
-          <VibePlayer
-            originalVideoUrl={result.originalVideoUrl}
-            aiClipUrl={result.aiClipUrl}
-            insertAtTimestamp={result.insertAtTimestamp}
-            adSlot={result.adSlot}
-          />
+          {/* Video Player */}
+          {result.aiClipUrl && (
+            <VibePlayer
+              originalVideoUrl={result.originalVideoUrl}
+              aiClipUrl={result.aiClipUrl}
+              insertAtTimestamp={result.insertAtTimestamp}
+              adSlot={result.adSlot}
+            />
+          )}
+
+          {/* Pipeline info */}
+          <div className="bg-gray-900 rounded-xl p-4 border border-gray-800">
+            <p className="text-xs text-gray-500 mb-2">Pipeline steps</p>
+            <div className="flex flex-wrap gap-2">
+              {result.pipelineSteps.map((step, i) => (
+                <span
+                  key={i}
+                  className={`text-xs px-2.5 py-1 rounded-full ${
+                    step.includes("fail")
+                      ? "bg-red-900/40 text-red-400"
+                      : "bg-green-900/40 text-green-400"
+                  }`}
+                >
+                  {step}
+                </span>
+              ))}
+            </div>
+            {result.savedToSupabase && (
+              <p className="text-xs text-green-500 mt-2">✓ Saved to library</p>
+            )}
+            {result.saveError && (
+              <p className="text-xs text-red-400 mt-2">Save error: {result.saveError}</p>
+            )}
+          </div>
         </div>
-      ) : null}
-    </section>
+      )}
+    </div>
   );
 }
