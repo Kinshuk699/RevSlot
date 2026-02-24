@@ -260,23 +260,37 @@ FRAME SELECTION RULES:
 THE EDITING INSTRUCTION (inpaintingPrompt) IS THE MOST CRITICAL FIELD:
 Write it as a direct command to an AI image editor. This is what actually controls the output quality.
 
+═══ ABSOLUTE RULE — SCENE PRESERVATION ═══
+The edited frame MUST be VISUALLY IDENTICAL to the original frame in every way EXCEPT for the addition of the product. This is NON-NEGOTIABLE:
+- SAME camera angle — do NOT change the shot (medium shot stays medium, wide stays wide)
+- SAME framing and composition — do NOT zoom in, zoom out, or reframe
+- SAME character positions, poses, clothing, and body language — change ONLY what is strictly necessary to hold/wear the product
+- SAME background — every single element in the background must remain unchanged
+- SAME lighting direction, color temperature, and shadows
+- ALL characters visible in the original frame MUST remain visible in the edited frame
+- If the original shows two people talking, the edit must STILL show two people talking — just with the product added
+- The viewer should NOT be able to tell the frame was edited unless they notice the product
+
+Your inpaintingPrompt MUST begin with: "Keep the exact same camera angle, framing, and composition. "
+Then describe ONLY the minimal change needed to add the product.
+
 FOR CHARACTER INTERACTION (match product to body part!):
-- SHOES: "The person is wearing [brand] sneakers on their feet, the shoes clearly visible as they stand/walk" — NEVER "holding shoes"
-- DRINKS: "The person is holding a [brand] can in their right hand, gripping it casually" or "drinking from a [brand] bottle"
-- HEADPHONES: "The person is wearing [brand] headphones over their ears, the logo visible on the ear cup"
-- GLASSES: "The person is wearing [brand] sunglasses, the distinctive frame shape clearly visible"
-- FOOD: "The person is holding a [brand] packet" or "a [brand] packet sits on the counter next to them"
+- SHOES: "Keep the exact same camera angle, framing, and composition. Add [brand] sneakers on the person's feet, clearly visible as they stand/walk" — NEVER "holding shoes"
+- DRINKS: "Keep the exact same camera angle, framing, and composition. Add a [brand] can in the person's right hand, gripping it casually"
+- HEADPHONES: "Keep the exact same camera angle, framing, and composition. Add [brand] headphones over the person's ears, the logo visible on the ear cup"
+- GLASSES: "Keep the exact same camera angle, framing, and composition. Add [brand] sunglasses on the person's face"
+- FOOD: "Keep the exact same camera angle, framing, and composition. Add a [brand] packet in the person's hand" or "on the counter next to them"
 - Describe exactly HOW the character uses the product in its NATURAL way
-- The character's pose/clothing may change slightly to accommodate the product — that is expected and correct
+- The character's pose may change MINIMALLY to accommodate the product — but everything else stays identical
 
 FOR ALL PLACEMENTS:
 - Be VERY SPECIFIC about position and interaction
 - Describe the product accurately: brand name, type, packaging, distinctive colors/logo
 - Specify lighting match: "lit by the same warm overhead lamp", "matching the cool blue office lighting"
 - Specify perspective/angle: "viewed from the same slight downward angle as the camera"
-- Specify scale: "at realistic proportional size relative to the person hand/the objects around it"
-- State what NOT to change: "Keep the background, setting, and overall composition the same"
-- 80-150 words. More detail = better result.
+- Specify scale: "at realistic proportional size relative to the person's hand/the objects around it"
+- EXPLICITLY STATE: "Do not change the camera angle, zoom level, framing, background, other characters, or overall composition."
+- 100-180 words. More detail = better result.
 
 Return a JSON object with EXACTLY these fields:
 {
@@ -286,7 +300,7 @@ Return a JSON object with EXACTLY these fields:
   "sceneDescription": "Detailed description of the scene — environment, people (positions, actions), objects, surfaces, lighting direction and color temperature, mood. 2-3 sentences.",
   "placementRationale": "WHY you chose this frame and this specific placement strategy. How does the product naturally fit into this exact moment? What makes this placement feel authentic rather than forced? 2-3 sentences.",
   "inpaintingPrompt": "EDITING INSTRUCTION — the direct command for the AI image editor. See detailed instructions above. 80-150 words.",
-  "videoMotionPrompt": "Prompt for image-to-video animation. This is CRITICAL — describe the character INTERACTING with the product: drinking from the can, adjusting the headphones, casually holding the bottle while talking, glancing at the phone screen, etc. The interaction should feel natural and effortless — like the character has been using this product their whole life. Also describe ambient scene motion (gentle camera drift, natural lighting). The product must remain clearly visible and recognizable throughout. 50-100 words.",
+  "videoMotionPrompt": "Prompt for image-to-video animation. CRITICAL: This clip MUST look like the NEXT 5 SECONDS of the original video — same energy, same motion style, same pacing. Describe the EXISTING scene's motion continuing naturally (people keep talking, walking, gesturing — whatever they were doing in the original video). The product is simply PRESENT during this — the character is casually wearing/holding it as if they always had it. Do NOT describe dramatic new actions or camera movements that differ from the original footage. Subtle ambient motion: slight natural sway, background activity continuing, gentle lighting. Keep camera LOCKED — no zooming, no panning, no angle changes. 50-100 words.",
   "negativePrompt": "Comma-separated list of things to AVOID in both image and video generation."
 }
 
@@ -718,5 +732,5 @@ function buildFallbackInpaintingPrompt(
     ? `${brand} ${productDescription}`
     : `a premium ${brand} product`;
   const scene = sceneDesc ? `In this scene: ${sceneDesc}. ` : "";
-  return `${scene}Add a ${product} naturally into this scene. Place it on the most visible surface near any person in the frame — a table, counter, or desk. The product should be at realistic scale, matching the scene's lighting direction and color temperature. It should look like it was physically present when the photo was taken, with correct perspective and subtle shadows. Keep all other elements of the scene exactly as they are.`;
+  return `Keep the exact same camera angle, framing, and composition. ${scene}Add a ${product} naturally into this scene. Place it on the most visible surface near any person in the frame — a table, counter, or desk. The product should be at realistic scale, matching the scene's lighting direction and color temperature. It should look like it was physically present when the photo was taken, with correct perspective and subtle shadows. Do not change the camera angle, zoom level, framing, background, other characters, or overall composition.`;
 }
