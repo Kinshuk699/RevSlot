@@ -274,13 +274,20 @@ The edited frame MUST be VISUALLY IDENTICAL to the original frame in every way E
 Your inpaintingPrompt MUST begin with: "Keep the exact same camera angle, framing, and composition. "
 Then describe ONLY the minimal change needed to add the product.
 
-FOR CHARACTER INTERACTION (match product to body part!):
-- SHOES: "Keep the exact same camera angle, framing, and composition. Add [brand] sneakers on the person's feet, clearly visible as they stand/walk" — NEVER "holding shoes"
-- DRINKS: "Keep the exact same camera angle, framing, and composition. Add a [brand] can in the person's right hand, gripping it casually"
-- HEADPHONES: "Keep the exact same camera angle, framing, and composition. Add [brand] headphones over the person's ears, the logo visible on the ear cup"
-- GLASSES: "Keep the exact same camera angle, framing, and composition. Add [brand] sunglasses on the person's face"
-- FOOD: "Keep the exact same camera angle, framing, and composition. Add a [brand] packet in the person's hand" or "on the counter next to them"
-- Describe exactly HOW the character uses the product in its NATURAL way
+═══ CRITICAL — TRANSITIONAL ARRIVAL STATE ═══
+The edited frame is the FIRST FRAME of a 5-second video clip. The video will animate the character USING the product.
+Therefore, the edited frame must show the product in its PRE-USE "arrival" state — NOT already fully in use.
+This creates a smooth sequence: crossfade reveals product nearby → video shows character picking it up / putting it on.
+
+FOR CHARACTER INTERACTION — show ARRIVAL state, NOT final use:
+- HEADPHONES: "Keep the exact same camera angle, framing, and composition. Add [brand] headphones hanging around the person's NECK (not on ears yet), resting on their shoulders, the logo visible on the ear cup." The VIDEO will show them reaching up and putting the headphones on.
+- DRINKS: "Keep the exact same camera angle, framing, and composition. Add a [brand] can/bottle on the nearest surface beside the person (table, counter, desk), within arm's reach." The VIDEO will show them reaching for it and taking a sip.
+- FOOD: "Keep the exact same camera angle, framing, and composition. Add a [brand] product on the nearest surface beside the person or loosely in their hand at waist level." The VIDEO will show them taking a bite.
+- GLASSES/SUNGLASSES: "Keep the exact same camera angle, framing, and composition. Add [brand] glasses in the person's hand, held casually at chest level." The VIDEO will show them putting the glasses on.
+- SHOES: "Keep the exact same camera angle, framing, and composition. Add [brand] sneakers on the person's feet." (No transitional state needed — shoes are already worn.)
+- WATCH/JEWELRY: "Keep the exact same camera angle, framing, and composition. Add a [brand] watch on the person's wrist." (Already worn.)
+- TECH (phones, laptops): "Keep the exact same camera angle, framing, and composition. Add a [brand] phone in the person's hand, held at their side." The VIDEO will show them glancing at it.
+- OTHER PACKAGED PRODUCTS: "Keep the exact same camera angle, framing, and composition. Add a [brand] product on the nearest surface beside the person."
 - The character's pose may change MINIMALLY to accommodate the product — but everything else stays identical
 
 FOR ALL PLACEMENTS:
@@ -300,7 +307,7 @@ Return a JSON object with EXACTLY these fields:
   "sceneDescription": "Detailed description of the scene — environment, people (positions, actions), objects, surfaces, lighting direction and color temperature, mood. 2-3 sentences.",
   "placementRationale": "WHY you chose this frame and this specific placement strategy. How does the product naturally fit into this exact moment? What makes this placement feel authentic rather than forced? 2-3 sentences.",
   "inpaintingPrompt": "EDITING INSTRUCTION — the direct command for the AI image editor. See detailed instructions above. 80-150 words.",
-  "videoMotionPrompt": "Prompt for image-to-video animation. CRITICAL RULES in priority order: (1) SAME camera angle, framing, and composition as the original frame — camera stays LOCKED, no zooming, no panning, no angle changes. (2) ALL characters visible in the frame stay visible and keep doing what they were doing (talking, gesturing, etc). (3) The character WITH the product performs ONE natural product-interaction action during the 5 seconds — match the product type: HEADPHONES=reaching up to adjust them or putting them on; DRINK=lifting the can/bottle to take a sip; FOOD=taking a casual bite; GLASSES=pushing them up the nose or putting them on; WATCH=glancing at wrist; PHONE=glancing at screen. The action should be subtle and effortless — part of the scene, not the focus. (4) Ambient scene motion continues naturally: background people walking, gentle natural sway, consistent lighting. 60-100 words.",
+  "videoMotionPrompt": "Prompt for image-to-video animation. The first frame shows the product in its ARRIVAL state (see inpaintingPrompt). Your job is to animate the character USING the product across 5 seconds. CRITICAL RULES in priority order: (1) Camera stays LOCKED — same angle, framing, composition. No zooming, panning, or angle changes. (2) ALL characters stay visible and continue their original activity (talking, gesturing, etc). (3) The character performs the PRODUCT-USE ACTION during the clip — match the product type: HEADPHONES=the person reaches up, lifts the headphones from around their neck, and places them over their ears; DRINK=the person reaches for the can/bottle on the surface, picks it up, and takes a casual sip; FOOD=the person picks up the food item and takes a bite; GLASSES=the person lifts the glasses to their face and puts them on; PHONE=the person raises the phone and glances at the screen. The action should be smooth and unhurried — like a natural gesture the character does all the time. (4) Ambient scene motion: background people walking, gentle natural sway, consistent lighting. 70-120 words.",
   "negativePrompt": "Comma-separated list of things to AVOID in both image and video generation."
 }
 
