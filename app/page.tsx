@@ -24,8 +24,8 @@ export default async function Home() {
           </span>
 
           <h1 className="font-['Space_Grotesk'] text-5xl font-bold tracking-tight sm:text-7xl">
-            <span className="text-black/80">Don&apos;t edit,</span>{" "}
-            <span className="italic text-[#36A64F]">just upload</span>
+            <span className="text-black/80">Product placement,</span>{" "}
+            <span className="italic text-[#36A64F]">minus the studio.</span>
           </h1>
 
           <p className="mt-5 max-w-xl text-lg text-[#1a1a1a]/60 sm:text-xl">
@@ -43,18 +43,12 @@ export default async function Home() {
               href="/sign-up"
               className="rounded-lg bg-[#36A64F] px-7 py-3 font-['Space_Mono'] text-sm font-bold uppercase tracking-wider text-white transition hover:bg-[#36A64F]/90"
             >
-              Get Started Free
-            </Link>
-            <Link
-              href="/sign-in"
-              className="rounded-lg border border-black/20 px-6 py-3 font-['Space_Mono'] text-sm font-bold uppercase tracking-wider text-black transition hover:border-black/40"
-            >
-              Sign In
+              Get Started for Free
             </Link>
           </div>
 
           <p className="mt-4 font-['Space_Mono'] text-xs uppercase tracking-widest text-black/30">
-            Available free · No credit card required
+            No credit card required
           </p>
         </section>
 
