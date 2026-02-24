@@ -6,6 +6,7 @@ import {
   type ProcessVideoResult,
 } from "@/app/actions/process-video";
 import { VibePlayer } from "./VibePlayer";
+import { Watermark } from "./Watermark";
 
 /* ═══════════════════════════  Types  ═══════════════════════════════ */
 
@@ -145,7 +146,7 @@ async function getVideoDuration(videoUrl: string): Promise<number | null> {
 
 /* ═══════════════════════════  Component  ═══════════════════════════ */
 
-export function VideoWorkflowPanel() {
+export function VideoWorkflowPanel({ plan = "free" }: { plan?: string }) {
   const [input, setInput] = useState<FormInput>(defaultInput);
   const [result, setResult] = useState<ProcessVideoResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -774,12 +775,15 @@ export function VideoWorkflowPanel() {
 
           {/* Video Player */}
           {result.aiClipUrl && (
-            <VibePlayer
-              originalVideoUrl={result.originalVideoUrl}
-              aiClipUrl={result.aiClipUrl}
-              insertAtTimestamp={result.insertAtTimestamp}
-              adSlot={result.adSlot}
-            />
+            <div className="relative">
+              <VibePlayer
+                originalVideoUrl={result.originalVideoUrl}
+                aiClipUrl={result.aiClipUrl}
+                insertAtTimestamp={result.insertAtTimestamp}
+                adSlot={result.adSlot}
+              />
+              <Watermark visible={plan === "free"} />
+            </div>
           )}
 
           {/* Pipeline info */}
