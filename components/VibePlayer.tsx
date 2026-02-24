@@ -150,14 +150,19 @@ export function VibePlayer({
     return () => clearInterval(interval);
   }, [phase, insertAtTimestamp, hasSplice, viewMode]);
 
-  // When phase switches to ai-clip → play the AI video
+  // When phase switches to ai-clip → play the AI video & pre-position original for smooth return
   useEffect(() => {
     if (phase === "ai-clip" && aiVideoRef.current) {
       aiVideoRef.current.currentTime = 0;
       aiVideoRef.current.play().catch(() => undefined);
       setShowOverlay(true);
+
+      // Pre-position original video so the crossfade back shows the correct frame
+      if (originalVideoRef.current) {
+        originalVideoRef.current.currentTime = insertAtTimestamp;
+      }
     }
-  }, [phase]);
+  }, [phase, insertAtTimestamp]);
 
   // When AI clip ends → switch back to original video
   const handleAiClipEnded = useCallback(() => {
@@ -402,22 +407,26 @@ export function VibePlayer({
 
       {/* ─── Video area ─── */}
       <div className="relative overflow-hidden rounded-xl border border-zinc-800">
-        {/* Original video — no native controls, we supply our own */}
+        {/* Original video — always rendered for sizing, opacity controls visibility */}
         <video
           ref={originalVideoRef}
           src={originalVideoUrl}
-          className={`h-auto w-full bg-black ${showOriginal ? "" : "hidden"}`}
+          className={`h-auto w-full bg-black transition-opacity duration-700 ease-in-out ${
+            showOriginal ? "opacity-100" : "opacity-0 pointer-events-none"
+          }`}
           playsInline
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
         />
 
-        {/* AI clip video */}
+        {/* AI clip video — absolute overlay with crossfade */}
         {aiClipUrl && (
           <video
             ref={aiVideoRef}
             src={aiClipUrl}
-            className={`h-auto w-full bg-black ${showAiClip ? "" : "hidden"}`}
+            className={`absolute inset-0 h-full w-full object-contain bg-black transition-opacity duration-700 ease-in-out ${
+              showAiClip ? "opacity-100" : "opacity-0 pointer-events-none"
+            }`}
             playsInline
             onEnded={viewMode === "spliced" ? handleAiClipEnded : undefined}
             onPlay={() => setIsPlaying(true)}
