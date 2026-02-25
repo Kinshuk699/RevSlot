@@ -1,49 +1,44 @@
-# RevSlot — AI-Powered Product Placement for Any Video
+# RevSlot
 
 ## Product Name
-**RevSlot**
+RevSlot
 
-## One-Line Description
-RevSlot uses AI to automatically place products into any video — naturally, contextually, and shoppably.
+## One-Liner
+AI product placement for any video — upload, place, and sell in one click.
 
-## Team Members
-- **Kinshuk Sahni** — kinshuk.sahni6@gmail.com
+## Team
+- Kinshuk Sahni — kinshuk.sahni6@gmail.com
 
-## Live Deployment URL
-https://revslot.onrender.com/
+## Links
+- Live: https://revslot.onrender.com/
+- GitHub: https://github.com/Kinshuk699/RevSlot
 
-## GitHub Repository URL
-https://github.com/Kinshuk699/RevSlot
+## The Problem
+Product placement is a huge revenue channel, think Coca-Cola in every TV show, Ray-Ban in Top Gun, but it's completely locked behind big-budget studios and weeks of manual VFX work. If you're a creator or a small brand, you're basically shut out.
 
-## Problem Description
-Brands spend millions on product placement, but it's manual, expensive, and only accessible to big studios. Creators have tons of video content but no easy way to monetize it through native product integration. RevSlot solves this by using an AI Director (GPT-4o Vision) to analyze any video, find the perfect moment and surface for product placement, then generates a photorealistic composite frame (Flux Kontext Max) and a seamless 5-second AI video clip (Kling Video) — all in one click. The result is a shoppable video with a natural-looking product placement and a buy-now CTA bubble, turning any video into a revenue opportunity.
+I wanted to flip that. RevSlot lets anyone upload a video, describe a product, and get back a version where that product is naturally placed into the scene, with a shoppable buy link baked in. No editing skills needed, the whole thing runs on AI.
+
+There's also a bigger play here: retroactive product placement. Imagine taking old TV reruns or classic movies that are still getting millions of views and inserting modern products into them, naturally, in context. A 2005 sitcom could feature a 2026 brand without anyone noticing it wasn't always there. That's untapped ad revenue sitting in every streaming library, and RevSlot is built to unlock it.
+
+## How It Actually Works
+You upload a short video (up to 30s) and tell RevSlot what product to place (e.g. "Nike sneakers") along with a reference image. The pipeline does the rest:
+
+1. GPT-4o Vision looks at 12 frames sampled across the video and picks the best moment — it's smart about product types too (shoes go on feet, drinks go in hands, headphones around the neck).
+2. Flux Kontext Max takes that frame and regenerates it with the product naturally in the scene — correct lighting, perspective, shadows. It's not a paste job, the product is generated from scratch.
+3. Kling Video animates the edited frame into a 5-second clip showing the character actually interacting with the product.
+4. The VibePlayer splices that AI clip back into the original video at the right timestamp, and a shoppable "Shop" bubble appears so viewers can buy.
 
 ## Tech Stack
-- **Frontend**: Next.js 15 (App Router), React 19, Tailwind CSS v4, Framer Motion
-- **Auth**: Clerk
-- **Database & Storage**: Supabase (Postgres + Storage)
-- **AI Pipeline**: OpenAI GPT-4o Vision (AI Director), Fal.ai Flux Kontext Max (image compositing), Fal.ai Kling Video (video generation)
-- **Payments**: Stripe (Checkout + Webhooks)
-- **Hosting**: Render
+- Next.js 15 (App Router) + React 19 + Tailwind v4 + Framer Motion
+- Clerk for auth
+- Supabase for Postgres DB + file storage
+- OpenAI GPT-4o Vision, Fal.ai Flux Kontext Max, Fal.ai Kling Video
+- Stripe for subscriptions (Checkout + Webhooks)
+- Deployed on Render
 
-## How It Works
-1. **Upload** — Paste a video URL or upload an .mp4 file, describe the product, and provide a reference image.
-2. **AI Director** — GPT-4o Vision samples 12 frames across the video, picks the best moment and surface for natural placement, and writes detailed compositing instructions.
-3. **Generate** — Flux Kontext Max composites the product into the chosen frame, then Kling Video generates a seamless 5-second clip from that composite.
-4. **Preview & Share** — The VibePlayer splices the AI clip into the original video at the exact timestamp, with a shoppable buy-now bubble overlay. Videos are saved to your dashboard history for replay.
-
-## Key Features
-- One-click demo pre-loaded with sample video + product for instant evaluation
-- Three-tier SaaS plan system (Free / Creator / Studio) with Stripe Checkout
-- Rate-limited upload API with persistent video storage on Supabase
-- AI-generated assets persisted to own Supabase Storage (not dependent on fal.ai TTL)
-- Stripe `customer_id` stored for reliable subscription downgrades
-- OpenGraph and Twitter Card meta tags for sharing
-- Full routes manifest in `ROUTES.md`
-
-## How to Test
-1. Visit https://revslot.onrender.com/ and sign up with an email
-2. Go to Dashboard → click **"Load Demo"** to pre-fill sample video + product
-3. Click **"Let AI Director Place Product"** and watch the live pipeline logs
-4. Pipeline runs ~3–8 minutes (GPT-4o → Flux Kontext Max → Kling Video)
-5. Once done, the VibePlayer shows the original video with the AI clip spliced in
+## Testing It
+1. Go to https://revslot.onrender.com/ and sign up
+2. Hit "Load Demo" on the dashboard — this pre-fills a sample video and Nike product
+3. Click "Let AI Director Place Product" and watch the logs
+4. Takes about 3–8 min to run the full pipeline
+5. VibePlayer shows the final result — toggle between spliced/original/AI-only views

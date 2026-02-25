@@ -7,8 +7,10 @@
 | `/`                            | Public   | Landing page — hero, How It Works, Use Cases, Tech Stack, Pricing grid   |
 | `/sign-in`                     | Public   | Clerk-hosted sign-in (catch-all `[[...sign-in]]`)                        |
 | `/sign-up`                     | Public   | Clerk-hosted sign-up (catch-all `[[...sign-up]]`)                        |
+| `/demo`                        | Public   | Precomputed demo — VibePlayer with a ready-made AI placement result      |
 | `/dashboard`                   | Private  | Dashboard overview — plan stats, "Create New Video" CTA, VideoHistory   |
 | `/create`                      | Private  | Video generator — AI Director pipeline (VideoWorkflowPanel)             |
+| `/pricing`                     | Private  | Plan selection — current plan context, Stripe Checkout for upgrades      |
 
 ## API Routes
 

@@ -45,6 +45,12 @@ export default async function Home() {
             >
               Get Started for Free
             </Link>
+            <Link
+              href="/demo"
+              className="rounded-lg border border-black/15 bg-white px-7 py-3 font-['Space_Mono'] text-sm font-bold uppercase tracking-wider text-black/70 transition hover:bg-black/5"
+            >
+              See a Demo
+            </Link>
           </div>
 
           <p className="mt-4 font-['Space_Mono'] text-xs uppercase tracking-widest text-black/30">

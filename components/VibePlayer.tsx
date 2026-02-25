@@ -579,6 +579,13 @@ export function VibePlayer({
           )}
         </div>
       </div>
+
+      {/* AI disclosure */}
+      <div className="mt-2 flex justify-end">
+        <span className="rounded-full border border-zinc-700 bg-zinc-800/60 px-2.5 py-0.5 text-[10px] font-medium tracking-wide text-zinc-500">
+          AI-enhanced placement
+        </span>
+      </div>
     </div>
   );
 }
